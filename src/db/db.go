@@ -87,8 +87,8 @@ func (db *Db) AddTask(ff *ffmpeg.Ffmpeg) error {
 
 func (db *Db) GetTask() (*ffmpeg.Ffmpeg, error) {
 	// get 1 task
-	results, err := db.db.Query(`SELECT t.* FROM tasks t LEFT JOIN locks l ON (l.taskID = t.id) 
-                            WHERE t.status="created" AND ISNULL(l.id) 
+	results, err := db.db.Query(`SELECT t.* FROM tasks t LEFT JOIN locks l ON (l.taskID = t.id)
+                            WHERE t.status='created' AND ISNULL(l.id)
                             ORDER BY t.createdAt limit 1`)
 	if err != nil {
 		panic(err.Error())
