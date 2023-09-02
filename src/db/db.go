@@ -20,13 +20,15 @@ type Db struct {
 }
 
 type TasksTable struct {
-	ID        int
-	Name      string
-	Filename  string
-	CreatedAt time.Time
-	Status    string
-	ServiceID int
-	UserID    string
+	ID             int
+	Name           string
+	Filename       string
+	ResultFilename string
+	CreatedAt      time.Time
+	Status         string
+	ServiceID      int
+	UserID         string
+	OrigFileName   string
 }
 
 func (db *Db) Lock(taskID int) error {
@@ -74,8 +76,8 @@ func (db *Db) UnLock(taskID int) error {
 }
 
 func (db *Db) AddTask(ff *ffmpeg.Ffmpeg) error {
-	q := fmt.Sprintf("INSERT INTO `tasks` (`name`, `filename`, `status`, `serviceID`, `userID`) VALUES ('%s', '%s', '%s', %d, '%s')",
-		"convert", ff.FileName, "created", db.serviceID, "")
+	q := fmt.Sprintf("INSERT INTO `tasks` (`name`, `filename`, `status`, `serviceID`, `userID`, `origFileName`, `ResultFilename`) VALUES ('%s', '%s', '%s', %d, '%s', '%s', '%s')",
+		ff.Name, ff.FileName, "created", db.serviceID, "", ff.OrigFileName, ff.FileNameResult)
 	log.Println(q)
 	res, err := db.db.Query(q)
 	if err != nil {
@@ -103,6 +105,8 @@ func (db *Db) GetTask() (*ffmpeg.Ffmpeg, error) {
 			&tasksTable.Status,
 			&tasksTable.ServiceID,
 			&tasksTable.UserID,
+			&tasksTable.OrigFileName,
+			&tasksTable.ResultFilename,
 		)
 		if err != nil {
 			panic(err.Error())
@@ -110,12 +114,40 @@ func (db *Db) GetTask() (*ffmpeg.Ffmpeg, error) {
 		fmt.Println(tasksTable)
 
 		if err := db.Lock(tasksTable.ID); err == nil {
-			ff := ffmpeg.NewFfmpeg(tasksTable.Filename, tasksTable.Name, tasksTable.ID)
+			ff := ffmpeg.NewFfmpeg(tasksTable.OrigFileName, tasksTable.Filename, tasksTable.Name, tasksTable.ID)
 			return ff, nil
 		}
 	}
 
 	return nil, errors.New("no tasks")
+}
+
+func (db *Db) TaskList() (res []TasksTable, err error) {
+	// get tasks list
+	results, err := db.db.Query(`SELECT * FROM tasks order by id desc limit 50`)
+	if err != nil {
+		return nil, err
+	}
+	for results.Next() {
+		var tasksTable TasksTable
+		err = results.Scan(
+			&tasksTable.ID,
+			&tasksTable.Name,
+			&tasksTable.Filename,
+			&tasksTable.CreatedAt,
+			&tasksTable.Status,
+			&tasksTable.ServiceID,
+			&tasksTable.UserID,
+			&tasksTable.OrigFileName,
+			&tasksTable.ResultFilename,
+		)
+		if err != nil {
+			panic(err.Error())
+		}
+		res = append(res, tasksTable)
+	}
+
+	return res, nil
 }
 
 // delete the task
@@ -124,7 +156,17 @@ func (db *Db) RemoveTask(ff *ffmpeg.Ffmpeg) error {
 	return nil
 }
 
-// mark task as completed
+func (db *Db) UpdateTask(ff *ffmpeg.Ffmpeg, status string) error {
+	q := fmt.Sprintf("UPDATE `tasks` SET status='%s' WHERE id=%d",
+		status, ff.ID)
+	res, err := db.db.Query(q)
+	if err != nil {
+		return err
+	}
+	res.Close()
+	return nil
+}
+
 func (db *Db) FinishTask(ff *ffmpeg.Ffmpeg, status string) error {
 	q := fmt.Sprintf("UPDATE `tasks` SET status='%s' WHERE id=%d",
 		status, ff.ID)

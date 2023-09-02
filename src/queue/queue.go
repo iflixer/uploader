@@ -16,44 +16,60 @@ type Queue struct {
 	s3 *s3serv.S3serv
 }
 
-func (f *Queue) RunAsync() error {
-	go f.worker()
+func (q *Queue) RunAsync() error {
+	go q.worker()
 	return nil
 }
 
 // Add saves the task to DB
-func (f *Queue) Add(ff *ffmpeg.Ffmpeg) error {
+func (q *Queue) Add(ff *ffmpeg.Ffmpeg) error {
 	// create the task in DB
-	return f.db.AddTask(ff)
+	return q.db.AddTask(ff)
 }
 
-func (f *Queue) worker() {
+func (q *Queue) Tasks() ([]db.TasksTable, error) {
+	return q.db.TaskList()
+}
+
+func (q *Queue) worker() {
 	for {
-		log.Println("tick")
-		if ff, err := f.db.GetTask(); err == nil {
+		// log.Println("tick")
+		if ff, err := q.db.GetTask(); err == nil {
 			switch ff.Name {
 			case "convert":
+				q.db.UpdateTask(ff, "working")
 				if err := ff.Convert(); err == nil {
-					f.db.FinishTask(ff, "done")
+					q.db.UpdateTask(ff, "done")
+					ff.Name = "upload"
+					q.Add(ff)
 				} else {
-					f.db.FinishTask(ff, "fail")
+					q.db.FinishTask(ff, "fail")
+				}
+			case "upload":
+				q.db.UpdateTask(ff, "working")
+				if err := q.s3.Add(ff); err == nil {
+					q.db.FinishTask(ff, "done")
+				} else {
+					q.db.FinishTask(ff, "fail")
 				}
 			case "torrent":
+				q.db.UpdateTask(ff, "working")
+				// TODO: spawn a goroutine here
 				filename, ok := torrentServ.Download(ff.Magnet)
 				if ok {
-					f.db.FinishTask(ff, "done")
-					ff.FileName = "/files/" + filename
+					q.db.FinishTask(ff, "done")
+					ff.FileName = filename
 					ff.Name = "convert"
-					f.Add(ff)
+					q.Add(ff)
 				} else {
-					f.db.FinishTask(ff, "fail")
+					q.db.FinishTask(ff, "fail")
 				}
 			default:
-				f.db.FinishTask(ff, "wrongname")
+				q.db.FinishTask(ff, "wrongname")
 				log.Println("task type not found:", ff.Name)
 			}
 		} else {
-			log.Println("get task error:", err)
+			// log.Println("get task error:", err)
 		}
 		time.Sleep(time.Second * 10)
 	}

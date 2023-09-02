@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"uploader/shell"
 )
 
@@ -12,26 +11,39 @@ type Ffmpeg struct {
 	ID             int
 	Name           string
 	Magnet         string
+	OrigFileName   string
 	FileName       string
 	FileNameResult string
 	FileNameLog    string
-	FileNameErr    string
 }
 
 func (f *Ffmpeg) Convert() error {
-	log.Println("Ffmpeg.convert ", f.FileName)
-	out, errout, err := shell.Shellout(f.cmdFfmpeg())
+	if err := f.convert(f.cmdFfmpeg("sd")); err != nil {
+		return err
+	}
+	if err := f.convert(f.cmdFfmpeg("hd")); err != nil {
+		return err
+	}
+	if err := f.convert(f.cmdFfmpeg("")); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (f *Ffmpeg) convert(cmd string) error {
+	out, errout, err := shell.Shellout(cmd)
 	if err != nil {
-		log.Printf("convert error: %s\n", err)
+		log.Printf("convert error: %s, errour: %s\n", err, errout)
 		return err
 	}
 	f.writeLogs(out, errout)
 	return nil
 }
-
 func (f *Ffmpeg) Probe(full bool) (string, error) {
-	log.Println("Ffmpeg.probe ", f.FileName)
-	stdout, stderr, err := shell.Shellout(f.cmdProbe(full))
+	cmd := f.cmdProbe(full)
+	log.Println("Ffmpeg.probe ", cmd)
+	stdout, stderr, err := shell.Shellout(cmd)
 	if err != nil {
 		res := fmt.Sprintf("probe error: %s\n %s\n %s", stdout, stderr, err)
 		log.Println(res)
@@ -41,36 +53,43 @@ func (f *Ffmpeg) Probe(full bool) (string, error) {
 }
 
 func (f *Ffmpeg) writeLogs(out, errout string) error {
-	fmt.Println("--- stdout ---")
-	fmt.Println(out)
-	if err := os.WriteFile(f.FileNameLog, []byte(out), 0644); err != nil {
-		log.Printf("error saving log: %v\n", err)
-		return err
-	}
 	fmt.Println("--- stderr ---")
 	fmt.Println(errout)
-	if err := os.WriteFile(f.FileNameErr, []byte(errout), 0644); err != nil {
+	if err := os.WriteFile("/files/"+f.FileNameLog, []byte(errout), 0644); err != nil {
 		log.Printf("error saving errlog: %v\n", err)
 		return err
 	}
 	return nil
 }
 
-func (f *Ffmpeg) cmdFfmpeg() string {
+func (f *Ffmpeg) cmdFfmpeg(size string) string {
+	height := ""
+	fileResult := f.FileName
+	switch size {
+	case "":
+		height = "720"
+	case "sd":
+		height = "288"
+		fileResult += "_sd"
+	case "hd":
+		height = "1080"
+		fileResult += "_hd"
+	}
+
 	p := `ffmpeg \
 	-y \
+	-hide_banner \
 	-i %s \
 	-preset medium \
 	-movflags faststart \
 	-c:v libx264 \
-	-b:v 2M \
 	-b:a 200 \
 	-pass 1 \
-	-vf scale=320:280 \
+	-vf scale=-1:%s \
 	-c:a copy \
 	-f mp4 \
-	%s`
-	return fmt.Sprintf(p, f.FileName, f.FileNameResult)
+	%s.mp4`
+	return fmt.Sprintf(p, "/files/"+f.FileName, height, "/files/"+fileResult)
 }
 
 func (f *Ffmpeg) cmdProbe(full bool) string {
@@ -78,28 +97,30 @@ func (f *Ffmpeg) cmdProbe(full bool) string {
 		return f.cmdProbeFull()
 	}
 	p := `ffprobe \
+	-hide_banner \
 	-v error \
 	%s`
-	return fmt.Sprintf(p, f.FileName)
+	return fmt.Sprintf(p, "/files/"+f.FileName)
 }
 
 func (f *Ffmpeg) cmdProbeFull() string {
 	p := `ffprobe \
+	-hide_banner \
 	%s`
-	return fmt.Sprintf(p, f.FileName)
+	return fmt.Sprintf(p, "/files/"+f.FileName)
 }
 
-func NewFfmpeg(fileName, name string, id int) *Ffmpeg {
-	res := strings.Replace(fileName, ".", "_out.", 1)
-	l := fileName + "_log"
-	er := fileName + "_err"
+func NewFfmpeg(origFileName, fileName, name string, id int) *Ffmpeg {
+	// res := strings.Replace(fileName, ".", "_out.", 1)
+	res := fileName + ".mp4"
+	l := fileName + ".txt"
 	f := Ffmpeg{
 		ID:             id,
 		Name:           name,
+		OrigFileName:   origFileName,
 		FileName:       fileName,
 		FileNameResult: res,
 		FileNameLog:    l,
-		FileNameErr:    er,
 	}
 	return &f
 }

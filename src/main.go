@@ -24,7 +24,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	srv3serv, err := s3serv.NewS3serv()
+	srv3serv, err := s3serv.NewS3serv(os.Getenv("S3_BUCKET"), os.Getenv("S3_ENDPOINT"), os.Getenv("S3_KEY_ID"), os.Getenv("S3_SECRET"))
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -13,7 +13,7 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 
 	if videofile == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("videofile?"))
+		_, _ = w.Write([]byte("videofile?"))
 		return
 	}
 
@@ -21,16 +21,16 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := os.Stat(videofile); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("file not found"))
+		_, _ = w.Write([]byte("file not found"))
 		return
 	}
 
-	ff := ffmpeg.NewFfmpeg(videofile, "", 0)
+	ff := ffmpeg.NewFfmpeg("", videofile, "", 0)
 
 	res, err := ff.Probe(true)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 	}
-	w.Write([]byte(res))
+	_, _ = w.Write([]byte(res))
 
 }

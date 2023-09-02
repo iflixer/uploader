@@ -5,10 +5,9 @@ services:
     environment:
       S3_ENDPOINT: https://d5378c6907f086901818a81bb0c8ce54.r2.cloudflarestorage.com
       S3_BUCKET: testme
-      S3_ACCOUNT_ID: d5378c6907f086901818a81bb0c8ce54
       S3_KEY_ID: 5746d2a029b637f934f923f944d38704
       S3_SECRET: afab7fc6626626abb38013afe65e6b02caec92534c3593aca8611d2f175b73b0
-      LOCAL_STORAGE_PATH: /data
+      LOCAL_STORAGE_PATH: /files
       MYSQL_URL: mysql://root:1@tcp(mysql:3306)/converter
       #MYSQL_URL: mysql://root:1@mysql:3306/converter
     ports:
