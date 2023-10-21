@@ -38,6 +38,7 @@ func main() {
 			log.Fatal(err)
 		}
 		mysqlURL = strings.TrimSpace(string(mysqlURL_))
+		fmt.Printf("mysqlURL: [%s]\n", mysqlURL)
 	}
 
 	s3secret := os.Getenv("S3_SECRET")
