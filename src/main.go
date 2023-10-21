@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -32,13 +31,11 @@ func main() {
 
 	mysqlURL := os.Getenv("MYSQL_URL")
 	if os.Getenv("MYSQL_URL_FILE") != "" {
-		fmt.Println("get MYSQL_URL_FILE")
 		mysqlURL_, err := os.ReadFile(os.Getenv("MYSQL_URL_FILE"))
 		if err != nil {
 			log.Fatal(err)
 		}
 		mysqlURL = strings.TrimSpace(string(mysqlURL_))
-		fmt.Printf("mysqlURL: [%s]\n", mysqlURL)
 	}
 
 	s3secret := os.Getenv("S3_SECRET")

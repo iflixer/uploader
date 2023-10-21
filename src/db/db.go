@@ -195,7 +195,7 @@ func NewDb(serviceID int, sqlURL string) (d *Db, err error) {
 	sqlURL = sqlURL + "?parseTime=true"
 
 	// db, err := sql.Open("mysql", "root:<yourMySQLdatabasepassword>@tcp(127.0.0.1:3306)/test")
-	log.Println("mysql URL:", sqlURL)
+	// log.Println("mysql URL:", sqlURL)
 	if d.db, err = sql.Open("mysql", sqlURL); err != nil {
 		panic(err.Error())
 	}
