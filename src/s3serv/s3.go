@@ -2,13 +2,10 @@ package s3serv
 
 import (
 	"context"
-	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"os"
-	"time"
 	"uploader/ffmpeg"
 )
 
@@ -22,44 +19,25 @@ type S3serv struct {
 	accessKeySecret string
 }
 
-func (s *S3serv) Add(ff *ffmpeg.Ffmpeg) (err error) {
-	if err = s.upload("/files/"+ff.FileNameResult, "tmp", ff.FileNameResult); err != nil {
+func (s *S3serv) Upload(ff *ffmpeg.Ffmpeg) (err error) {
+	if err = s.UploadObject("/files/"+ff.FileNameResult, "tmp", ff.FileNameResult); err != nil {
 		return
 	}
-	if err = s.upload("/files/"+ff.FileNameLog, "tmp", ff.FileNameLog); err != nil {
+	if err = s.UploadObject("/files/"+ff.FileNameLog, "tmp", ff.FileNameLog); err != nil {
 		return
 	}
-	if err = s.upload("/files/"+ff.FileName, "tmp", ff.FileName); err != nil {
+	if err = s.UploadObject("/files/"+ff.FileName, "tmp", ff.FileName); err != nil {
 		return
 	}
 	return nil
 }
 
-func (s *S3serv) upload(localFilePath string, s3folder, s3filename string) error {
-	targetPath := s3folder + "/" + s3filename
-	fmt.Println("Upload " + localFilePath + " to " + targetPath + "...")
-	start := time.Now()
-	f, err := os.OpenFile(localFilePath, os.O_RDONLY, 0644)
-	if err != nil {
-		return err
-	}
-	object := s3.PutObjectInput{
-		Bucket: aws.String(s.bucketName), // The path to the directory you want to upload the object to, starting with your Space name.
-		Key:    aws.String(targetPath),   // Object key, referenced whenever you want to access this file later.
-		Body:   f,                        // The object's contents.
-		/*		ACL:    aws.String("public-read"),                  // Defines Access-control List (ACL) permissions, such as private or public.
-				Metadata: map[string]*string{ // Required. Defines metadata tags.
-					"x-amz-meta-my-key": aws.String("your-value"),
-				},*/
-	}
+func (s *S3serv) Head(path string) (length int64, err error) {
+	return s.HeadObject(path)
+}
 
-	_, err = s.client.PutObject(context.TODO(), &object)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("upload to s3 done in %s\n", time.Since(start))
-	return nil
+func (s *S3serv) List(path string) (list []string, err error) {
+	return s.ListStorage(path)
 }
 
 func NewS3serv(bucketName, endPoint, accessKeyId, accessKeySecret string) (*S3serv, error) {

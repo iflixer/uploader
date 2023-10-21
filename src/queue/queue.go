@@ -47,7 +47,7 @@ func (q *Queue) worker() {
 				}
 			case "upload":
 				q.db.UpdateTask(ff, "working")
-				if err := q.s3.Add(ff); err == nil {
+				if err := q.s3.Upload(ff); err == nil {
 					q.db.FinishTask(ff, "done")
 				} else {
 					q.db.FinishTask(ff, "fail")

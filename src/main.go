@@ -36,7 +36,7 @@ func main() {
 
 	srvQueue.RunAsync()
 
-	srvServer, err := httpserv.NewServer("3333", srvQueue)
+	srvServer, err := httpserv.NewServer("3333", srvQueue, srv3serv)
 	if err != nil {
 		log.Fatal(err)
 	}

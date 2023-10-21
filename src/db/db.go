@@ -76,7 +76,9 @@ func (db *Db) UnLock(taskID int) error {
 }
 
 func (db *Db) AddTask(ff *ffmpeg.Ffmpeg) error {
-	q := fmt.Sprintf("INSERT INTO `tasks` (`name`, `filename`, `status`, `serviceID`, `userID`, `origFileName`, `ResultFilename`) VALUES ('%s', '%s', '%s', %d, '%s', '%s', '%s')",
+	q := fmt.Sprintf("INSERT INTO `tasks` "+
+		"(`name`, `filename`, `status`, `serviceID`, `userID`, `origFileName`, `ResultFilename`) VALUES "+
+		"('%s', '%s', '%s', %d, '%s', '%s', '%s')",
 		ff.Name, ff.FileName, "created", db.serviceID, "", ff.OrigFileName, ff.FileNameResult)
 	log.Println(q)
 	res, err := db.db.Query(q)

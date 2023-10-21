@@ -62,34 +62,33 @@ func (f *Ffmpeg) writeLogs(out, errout string) error {
 	return nil
 }
 
-func (f *Ffmpeg) cmdFfmpeg(size string) string {
-	height := ""
+func (f *Ffmpeg) cmdFfmpeg(quality string) string {
+	size := ""
 	fileResult := f.FileName
-	switch size {
+	switch quality {
 	case "":
-		height = "720"
+		size = "1280:720"
 	case "sd":
-		height = "288"
+		size = "512:288"
 		fileResult += "_sd"
 	case "hd":
-		height = "1080"
+		size = "1920:1080"
 		fileResult += "_hd"
 	}
 
 	p := `ffmpeg \
 	-y \
 	-hide_banner \
+	-fflags +discardcorrupt
 	-i %s \
 	-preset medium \
 	-movflags faststart \
 	-c:v libx264 \
-	-b:a 200 \
-	-pass 1 \
-	-vf scale=-1:%s \
-	-c:a copy \
+	-vf scale=%s \
+	-c:a aac \
 	-f mp4 \
 	%s.mp4`
-	return fmt.Sprintf(p, "/files/"+f.FileName, height, "/files/"+fileResult)
+	return fmt.Sprintf(p, "/files/"+f.FileName, size, "/files/"+fileResult)
 }
 
 func (f *Ffmpeg) cmdProbe(full bool) string {
