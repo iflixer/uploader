@@ -42,6 +42,7 @@ func (s *Server) init() {
 	mux.HandleFunc("/check", s.check)
 	mux.HandleFunc("/tasks", s.tasks)
 	mux.HandleFunc("/files/", s.files)
+	mux.HandleFunc("/alive", s.alive)
 
 	s.mux = mux
 }
@@ -62,6 +63,10 @@ func (s *Server) Run() {
 }
 
 func (s *Server) getRoot(w http.ResponseWriter, r *http.Request) {
+	// log.Println("get " + r.RequestURI)
+}
+
+func (s *Server) alive(w http.ResponseWriter, r *http.Request) {
 	// log.Println("get " + r.RequestURI)
 }
 
