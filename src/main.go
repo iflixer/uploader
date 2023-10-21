@@ -5,6 +5,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 	"uploader/db"
 	"uploader/httpserv"
@@ -26,7 +27,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		apiToken = string(apiToken_)
+		apiToken = strings.TrimSpace(string(apiToken_))
 	}
 
 	mysqlURL := os.Getenv("MYSQL_URL")
@@ -36,7 +37,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		mysqlURL = string(mysqlURL_)
+		mysqlURL = strings.TrimSpace(string(mysqlURL_))
 	}
 
 	s3secret := os.Getenv("S3_SECRET")
@@ -45,7 +46,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		s3secret = string(s3secret_)
+		s3secret = strings.TrimSpace(string(s3secret_))
 	}
 
 	srvDb, err := db.NewDb(serviceID, mysqlURL)
