@@ -45,7 +45,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		mysqlURL = string(s3secret_)
+		s3secret = string(s3secret_)
 	}
 
 	srvDb, err := db.NewDb(serviceID, mysqlURL)
