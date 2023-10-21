@@ -17,10 +17,11 @@ import (
 // this service should watch the new tasks in DB and process them
 
 type Server struct {
-	mux   *http.ServeMux
-	port  string
-	queue *queue.Queue
-	s3    *s3serv.S3serv
+	mux      *http.ServeMux
+	port     string
+	apiToken string
+	queue    *queue.Queue
+	s3       *s3serv.S3serv
 }
 
 type Resp struct {
@@ -120,11 +121,12 @@ func (s *Server) stringHash(str string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func NewServer(port string, queue *queue.Queue, srv3serv *s3serv.S3serv) (*Server, error) {
+func NewServer(port string, apiToken string, queue *queue.Queue, srv3serv *s3serv.S3serv) (*Server, error) {
 	s := &Server{
-		port:  port,
-		queue: queue,
-		s3:    srv3serv,
+		port:     port,
+		apiToken: apiToken,
+		queue:    queue,
+		s3:       srv3serv,
 	}
 	s.init()
 	return s, nil
