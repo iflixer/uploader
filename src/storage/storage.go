@@ -1,4 +1,4 @@
-package s3serv
+package storage
 
 import (
 	"context"
@@ -6,41 +6,33 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"uploader/ffmpeg"
 )
 
-// this service should watch the new tasks in DB and process them
-
-type S3serv struct {
-	client          *s3.Client
+type Service struct {
+	s3Client        *s3.Client
 	bucketName      string
 	endPoint        string
 	accessKeyId     string
 	accessKeySecret string
 }
 
-func (s *S3serv) Upload(ff *ffmpeg.Ffmpeg) (err error) {
-	if err = s.UploadObject("/files/"+ff.FileNameResult, "tmp", ff.FileNameResult); err != nil {
-		return
-	}
-	if err = s.UploadObject("/files/"+ff.FileNameLog, "tmp", ff.FileNameLog); err != nil {
-		return
-	}
-	if err = s.UploadObject("/files/"+ff.FileName, "tmp", ff.FileName); err != nil {
-		return
-	}
-	return nil
+func (s *Service) Upload(localFile, remoteFile string) (err error) {
+	return s.upload(localFile, remoteFile)
 }
 
-func (s *S3serv) Head(path string) (length int64, err error) {
-	return s.HeadObject(path)
+func (s *Service) Download(remoteFile, localFile string) (written int64, err error) {
+	return s.download(remoteFile, localFile)
 }
 
-func (s *S3serv) List(path string) (list []string, err error) {
-	return s.ListStorage(path)
+func (s *Service) Head(path string) (length int64, err error) {
+	return s.head(path)
 }
 
-func NewS3serv(bucketName, endPoint, accessKeyId, accessKeySecret string) (*S3serv, error) {
+func (s *Service) List(path string) (list []string, err error) {
+	return s.list(path)
+}
+
+func NewService(bucketName, endPoint, accessKeyId, accessKeySecret string) (*Service, error) {
 	r2Resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
 		return aws.Endpoint{
 			// URL:               fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountId),
@@ -56,13 +48,16 @@ func NewS3serv(bucketName, endPoint, accessKeyId, accessKeySecret string) (*S3se
 	if err != nil {
 		return nil, err
 	}
+	cfg.Region = "auto"
 
 	s3Client := s3.NewFromConfig(cfg)
-	return &S3serv{
-		client:          s3Client,
+	s := &Service{
+		s3Client:        s3Client,
 		bucketName:      bucketName,
 		endPoint:        endPoint,
 		accessKeyId:     accessKeyId,
 		accessKeySecret: accessKeySecret,
-	}, nil
+	}
+
+	return s, s.test()
 }

@@ -10,18 +10,16 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"uploader/queue"
-	"uploader/s3serv"
+	"uploader/storage"
 )
 
 // this service should watch the new tasks in DB and process them
 
 type Server struct {
-	mux      *http.ServeMux
-	port     string
-	apiToken string
-	queue    *queue.Queue
-	s3       *s3serv.S3serv
+	mux     *http.ServeMux
+	port    string
+	storage *storage.Service
+	tmpDir  string
 }
 
 type Resp struct {
@@ -35,13 +33,7 @@ func (s *Server) init() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.getRoot)
 	mux.HandleFunc("/favicon.ico", s.get404)
-	mux.HandleFunc("/convert", s.convert)
-	mux.HandleFunc("/probe", s.probe)
-	mux.HandleFunc("/check_storage", s.checkStorage)
-	mux.HandleFunc("/list_storage", s.listStorage)
-	mux.HandleFunc("/check", s.check)
-	mux.HandleFunc("/tasks", s.tasks)
-	mux.HandleFunc("/files/", s.files)
+	mux.HandleFunc("/convert", s.upload)
 	mux.HandleFunc("/alive", s.alive)
 
 	s.mux = mux
@@ -126,12 +118,11 @@ func (s *Server) stringHash(str string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func NewServer(port string, apiToken string, queue *queue.Queue, srv3serv *s3serv.S3serv) (*Server, error) {
+func NewServer(port string, tmpDir string, storage *storage.Service) (*Server, error) {
 	s := &Server{
-		port:     port,
-		apiToken: apiToken,
-		queue:    queue,
-		s3:       srv3serv,
+		port:    port,
+		storage: storage,
+		tmpDir:  tmpDir,
 	}
 	s.init()
 	return s, nil

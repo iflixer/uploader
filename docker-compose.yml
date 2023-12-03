@@ -6,7 +6,7 @@ services:
       S3_ENDPOINT: https://e259c83419213e1913b0a406cb9b1173.r2.cloudflarestorage.com
       S3_BUCKET: tpfx-mnt01
       S3_KEY_ID: 9d11d1503c8f699c1cca0d55e1cc0454
-      S3_SECRET: a3f718b118fb01d1b8d1295b6fba22ffeb53521b5d8942449674baeb1f745de0
+      S3_SECRET: ${S3_SECRET}
       LOCAL_STORAGE_PATH: /files
       MYSQL_URL: mysql://root:1@tcp(mysql:3306)/converter
     ports:
@@ -17,7 +17,6 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-
 
   mysql:
     image: mysql/mysql-server:8.0

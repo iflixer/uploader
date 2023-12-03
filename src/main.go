@@ -1,42 +1,23 @@
 package main
 
 import (
+	"github.com/joho/godotenv"
 	"log"
-	"math/rand"
 	"os"
 	"strings"
-	"time"
-	"uploader/db"
 	"uploader/httpserv"
-	"uploader/queue"
-	"uploader/s3serv"
+	"uploader/storage"
 )
 
 func main() {
 	log.Println("START")
 	var err error
 
-	s1 := rand.NewSource(time.Now().UnixNano())
-	r1 := rand.New(s1)
-	serviceID := r1.Intn(9999999999)
-
-	apiToken := os.Getenv("API_TOKEN")
-	if os.Getenv("API_TOKEN_FILE") != "" {
-		apiToken_, err := os.ReadFile(os.Getenv("API_TOKEN_FILE"))
-		if err != nil {
-			log.Fatal(err)
-		}
-		apiToken = strings.TrimSpace(string(apiToken_))
+	if err := godotenv.Load("../.env"); err != nil {
+		log.Println("Cant load .env: ", err)
 	}
 
-	mysqlURL := os.Getenv("MYSQL_URL")
-	if os.Getenv("MYSQL_URL_FILE") != "" {
-		mysqlURL_, err := os.ReadFile(os.Getenv("MYSQL_URL_FILE"))
-		if err != nil {
-			log.Fatal(err)
-		}
-		mysqlURL = strings.TrimSpace(string(mysqlURL_))
-	}
+	tmpDir := os.Getenv("TMP_FOLDER")
 
 	s3secret := os.Getenv("S3_SECRET")
 	if os.Getenv("S3_SECRET_FILE") != "" {
@@ -47,24 +28,12 @@ func main() {
 		s3secret = strings.TrimSpace(string(s3secret_))
 	}
 
-	srvDb, err := db.NewDb(serviceID, mysqlURL)
+	storageService, err := storage.NewService(os.Getenv("S3_BUCKET"), os.Getenv("S3_ENDPOINT"), os.Getenv("S3_KEY_ID"), s3secret)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	srv3serv, err := s3serv.NewS3serv(os.Getenv("S3_BUCKET"), os.Getenv("S3_ENDPOINT"), os.Getenv("S3_KEY_ID"), s3secret)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	srvQueue, err := queue.NewQueue(srvDb, srv3serv)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	srvQueue.RunAsync()
-
-	srvServer, err := httpserv.NewServer("3333", apiToken, srvQueue, srv3serv)
+	srvServer, err := httpserv.NewServer("3333", tmpDir, storageService)
 	if err != nil {
 		log.Fatal(err)
 	}
