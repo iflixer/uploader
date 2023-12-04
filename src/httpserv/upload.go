@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -104,22 +105,46 @@ func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunk
 			return
 		}
 
-		files, err1 := os.ReadDir(s.tmpDir)
+		files, err1 := filepath.Glob(filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut)))
 		if err1 != nil {
-			fmt.Printf("error read tmp directory:%s", err1)
+			fmt.Printf("error read tmp directory for chunks:%s", err1)
+			return
+		}
+		files, err = sortChunks(files)
+		if err != nil {
+			fmt.Printf("error sorting chunks:%s", err1)
 			return
 		}
 		for _, file := range files {
-			log.Println(file.Name())
-			if !file.IsDir() && strings.HasPrefix(file.Name(), chunkBaseName) {
-				fileChunk, _ := os.Open(chunkPath)
-				_, _ = io.Copy(fileOut, fileChunk)
-				_ = fileChunk.Close()
-			}
+			log.Println("combine chunk:", file)
+			chunkPath = filepath.Join(s.tmpDir, file)
+			fileChunk, _ := os.Open(chunkPath)
+			_, _ = io.Copy(fileOut, fileChunk)
+			_ = fileChunk.Close()
 		}
 		return
 	}
 	return
+}
+
+func sortChunks(data []string) ([]string, error) {
+	var lastErr error
+	sort.Slice(data, func(i, j int) bool {
+		aArr := strings.Split(data[i], "_")
+		a, err := strconv.Atoi(aArr[len(aArr)-1])
+		if err != nil {
+			lastErr = err
+			return false
+		}
+		bArr := strings.Split(data[j], "_")
+		b, err := strconv.Atoi(bArr[len(bArr)-1])
+		if err != nil {
+			lastErr = err
+			return false
+		}
+		return a < b
+	})
+	return data, lastErr
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
