@@ -117,9 +117,15 @@ func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunk
 		}
 		for _, file := range files {
 			log.Println("combine chunk:", file)
-			chunkPath = filepath.Join(s.tmpDir, file)
-			fileChunk, _ := os.Open(chunkPath)
-			_, _ = io.Copy(fileOut, fileChunk)
+			fileChunk, err := os.Open(file)
+			if err != nil {
+				log.Printf("error open chunk: %s", err)
+			}
+			written, err := io.Copy(fileOut, fileChunk)
+			if err != nil {
+				log.Printf("error copy chunk: %s", err)
+			}
+			log.Println("written:", written)
 			_ = fileChunk.Close()
 		}
 		return
@@ -148,7 +154,7 @@ func sortChunks(data []string) ([]string, error) {
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
-	log.Println("post upload ")
+	// log.Println("post upload ")
 	// limit the POST body size to 32.5Mb
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<20+512)
 	// r.ParseForm()
@@ -213,7 +219,7 @@ func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath 
 				log.Println(err)
 			}
 			files, err := filepath.Glob(filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut)))
-			log.Printf("chunk files: %+v", files)
+			log.Printf("chunk files: %+v\n", files)
 			if err != nil {
 				log.Println(err)
 			}

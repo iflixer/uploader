@@ -87,7 +87,7 @@ func (s *Server) returnResp(w http.ResponseWriter, txt string, err error) {
 	}
 	wr, _ := json.Marshal(re)
 	http.Error(w, string(wr), code)
-	log.Println(string(wr))
+	// log.Println(string(wr))
 }
 
 func (s *Server) fileHash(file multipart.File) (string, error) {
