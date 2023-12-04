@@ -16,10 +16,12 @@ import (
 // this service should watch the new tasks in DB and process them
 
 type Server struct {
-	mux     *http.ServeMux
-	port    string
-	storage *storage.Service
-	tmpDir  string
+	mux            *http.ServeMux
+	port           string
+	storage        *storage.Service
+	tmpDir         string
+	vManagerUrl    string
+	vManagerAddUrl string
 }
 
 type Resp struct {
@@ -33,7 +35,7 @@ func (s *Server) init() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.getRoot)
 	mux.HandleFunc("/favicon.ico", s.get404)
-	mux.HandleFunc("/convert", s.upload)
+	mux.HandleFunc("/upload", s.upload)
 	mux.HandleFunc("/alive", s.alive)
 
 	s.mux = mux
@@ -54,11 +56,11 @@ func (s *Server) Run() {
 	}
 }
 
-func (s *Server) getRoot(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getRoot(_ http.ResponseWriter, _ *http.Request) {
 	// log.Println("get " + r.RequestURI)
 }
 
-func (s *Server) alive(w http.ResponseWriter, r *http.Request) {
+func (s *Server) alive(_ http.ResponseWriter, _ *http.Request) {
 	// log.Println("get " + r.RequestURI)
 }
 
@@ -91,10 +93,10 @@ func (s *Server) returnResp(w http.ResponseWriter, txt string, err error) {
 func (s *Server) fileHash(file multipart.File) (string, error) {
 	h := md5.New()
 	if _, err := io.Copy(h, file); err != nil {
-		fmt.Errorf("error get hash of file:%s", err)
+		fmt.Printf("error get hash of file:%s", err)
 		return "", err
 	}
-	file.Seek(0, 0)
+	_, _ = file.Seek(0, 0)
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
@@ -103,10 +105,10 @@ func (s *Server) fileHashByName(fileName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	h := md5.New()
 	if _, err := io.Copy(h, file); err != nil {
-		fmt.Errorf("error get hash of file:%s", err)
+		fmt.Printf("error get hash of file:%s", err)
 		return "", err
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
@@ -118,11 +120,13 @@ func (s *Server) stringHash(str string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func NewServer(port string, tmpDir string, storage *storage.Service) (*Server, error) {
+func NewServer(port string, tmpDir, vManagerUrl string, storage *storage.Service) (*Server, error) {
 	s := &Server{
-		port:    port,
-		storage: storage,
-		tmpDir:  tmpDir,
+		port:           port,
+		storage:        storage,
+		tmpDir:         tmpDir,
+		vManagerUrl:    vManagerUrl,
+		vManagerAddUrl: vManagerUrl + "task_add",
 	}
 	s.init()
 	return s, nil

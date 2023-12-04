@@ -18,6 +18,7 @@ func main() {
 	}
 
 	tmpDir := os.Getenv("TMP_FOLDER")
+	vManagerUrl := os.Getenv("VMANAGER_URL")
 
 	s3secret := os.Getenv("S3_SECRET")
 	if os.Getenv("S3_SECRET_FILE") != "" {
@@ -33,7 +34,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	srvServer, err := httpserv.NewServer("3333", tmpDir, storageService)
+	srvServer, err := httpserv.NewServer("3333", tmpDir, vManagerUrl, storageService)
 	if err != nil {
 		log.Fatal(err)
 	}

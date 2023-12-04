@@ -10,9 +10,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
-func (s *Server) chunk(in multipart.File, fileNameIn, fileNameOut, contentRange string) (last bool, err error) {
+/*func (s *Server) chunk(in multipart.File, fileNameIn, fileNameOut, contentRange string) (last bool, err error) {
 	// bytes 0-999/1012602
 	rangeAndSize := strings.Split(contentRange, " ")
 	rangeParts := strings.Split(rangeAndSize[1], "/")
@@ -72,48 +73,210 @@ func (s *Server) chunk(in multipart.File, fileNameIn, fileNameOut, contentRange 
 		return
 	}
 	return
-}
+}*/
 
-func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
-	log.Println("get upload " + r.RequestURI)
-	r.ParseForm()
-	textresp := ""
-	fileNameIn := ""
-	fileNameOut := ""
-	r.ParseMultipartForm(10 << 20)
-	if file, handler, err := r.FormFile("file"); err == nil {
-		fmt.Println("Uploading the file " + handler.Filename)
-		defer file.Close()
-		contentRange := r.Header.Get("Content-Range")
-		fileNameIn = s.stringHash(handler.Filename)
-		fileExt := filepath.Ext(fileNameIn)
-		fileNameOut = fmt.Sprintf("%s.%s", s.stringHash(fileNameIn), fileExt)
-		if contentRange != "" {
-			if last, err := s.chunk(file, fileNameIn, fileNameOut, contentRange); !last {
-				s.returnResp(w, "add chunk", err)
-				return
-			}
-		} else { // little file?
-			fileOutPath := filepath.Join(s.tmpDir, fileNameOut)
-			fileOut, err := os.OpenFile(fileOutPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			defer fileOut.Close()
-			if err != nil {
-				fmt.Errorf("error create out file:%s", err)
-				return
-			}
-			if _, err := io.Copy(fileOut, file); err != nil {
-				fmt.Errorf("error copy form file to result file:%s", err)
-				return
-			}
-		}
-	}
-	textresp += fmt.Sprintf("Successfully Uploaded File %s as %s .\n", fileNameIn, fileNameOut)
+func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunksTotal int) (last bool, err error) {
+	last = false
+	chunkBaseName := fmt.Sprintf("chunk_%s", fileNameOut)
 
-	targetPath := filepath.Join("inbox", fileNameOut)
-	err := s.storage.Upload(targetPath, filepath.Join(s.tmpDir, fileNameOut))
+	chunkPath := filepath.Join(s.tmpDir, fmt.Sprintf("%s_%d", chunkBaseName, chunkNumber))
+	filePathOut := filepath.Join(s.tmpDir, fileNameOut)
+
+	f, err := os.OpenFile(chunkPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	defer func(f *os.File) { _ = f.Close() }(f)
 	if err != nil {
-		fmt.Errorf("error uploading file to storage:%s", err)
+		fmt.Printf("error create chunk:%s", err)
 		return
 	}
 
+	if _, err = io.Copy(f, in); err != nil {
+		fmt.Printf("error copy chunk:%s", err)
+		return
+	}
+
+	if chunkNumber == chunksTotal-1 { // last chunk
+		log.Println("combine file")
+		last = true
+		fileOut, err1 := os.OpenFile(filePathOut, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		defer func(fileOut multipart.File) { _ = fileOut.Close() }(fileOut)
+		if err1 != nil {
+			fmt.Printf("error create chunk:%s", err1)
+			return
+		}
+
+		files, err1 := os.ReadDir(s.tmpDir)
+		if err1 != nil {
+			fmt.Printf("error read tmp directory:%s", err1)
+			return
+		}
+		for _, file := range files {
+			log.Println(file.Name())
+			if !file.IsDir() && strings.HasPrefix(file.Name(), chunkBaseName) {
+				fileChunk, _ := os.Open(chunkPath)
+				_, _ = io.Copy(fileOut, fileChunk)
+				_ = fileChunk.Close()
+			}
+		}
+		return
+	}
+	return
+}
+
+func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
+	log.Println("post upload ")
+	// limit the POST body size to 32.5Mb
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<20+512)
+	// r.ParseForm()
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		fmt.Printf("error ParseMultipartForm:%s", err)
+		return
+	}
+	textresp := ""
+	chunkNumber, _ := strconv.Atoi(r.FormValue("chunk"))
+	chunksTotal, _ := strconv.Atoi(r.FormValue("chunks"))
+	postId := r.FormValue("news_id")
+	_ = postId
+	fileNameIn := r.FormValue("name")
+	// fileExt := filepath.Ext(fileNameIn)
+	fileNameOut := fmt.Sprintf("%s_%s", postId, fileNameIn)
+
+	if file, _, err := r.FormFile("qqfile"); err == nil {
+		defer func(file multipart.File) { _ = file.Close() }(file)
+		log.Printf("chunk (%s) %d of %d\n", fileNameIn, chunkNumber, chunksTotal)
+		if last, err := s.chunk(file, fileNameOut, chunkNumber, chunksTotal); !last {
+			s.returnResp(w, "added chunk", err)
+			return
+		}
+	} else {
+		fmt.Printf("error parse FormFile:%s", err)
+	}
+	textresp += fmt.Sprintf("Successfully Uploaded File %s as %s .\n", fileNameIn, fileNameOut)
+
+	log.Printf("file %s uploaded as %s\n", fileNameIn, fileNameOut)
+
+	filePathOut := filepath.Join(s.tmpDir, fileNameOut)
+	targetPath := filepath.Join("inbox", fileNameOut)
+	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
+
+	err := s.storage.Upload(filePathOut, targetPath)
+	if err != nil {
+		fmt.Printf("error uploading file to storage:%s", err)
+		return
+	}
+
+	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
+
+	// create task to convert
+	go s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// w.Header().Set("Content-Encoding", "br")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(s.createDleResponse(targetPath)))
+}
+
+func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath string) {
+	for {
+		u := fmt.Sprintf("%s?orig=%s", s.vManagerAddUrl, targetPath)
+		log.Printf("sending request to vManager to create task: %s\n", u)
+		_, err := getUrl(u, nil, false)
+		if err == nil {
+			// remove tmp files
+			log.Println("removing temporary files...")
+			err := os.Remove(filePathOut)
+			if err != nil {
+				log.Println(err)
+			}
+			files, err := filepath.Glob(filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut)))
+			log.Printf("chunk files: %+v", files)
+			if err != nil {
+				log.Println(err)
+			}
+			for _, f := range files {
+				if err := os.Remove(f); err != nil {
+					log.Println(err)
+				}
+			}
+			return
+		} else {
+			log.Println("task add error, will try again in 10 seconds:", err)
+			time.Sleep(time.Second * 10)
+		}
+	}
+}
+
+func (s *Server) createDleResponse(targetFilePath string) (res string) {
+	success := "false"
+	if targetFilePath != "" {
+		success = "true"
+	}
+	res = `{"success":%s,"returnbox":"
+<div class=\"file-preview-card\" data-type=\"file\" data-area=\"files\" data-deleteid=\"16\" data-url=\"https://alukard.bio/a1/%s\" data-path=\"16:XXX.mp4\" data-play=\"video\" data-public=\"1\">
+    \n\t
+    <div class=\"active-ribbon\">
+        <span>
+            <i class=\"mediaupload-icon mediaupload-icon-ok\"></i>
+        </span>
+    </div>
+    \n\t
+    <div class=\"file-content\">
+        \n\t\t<img src=\"https://testme.cloud/engine/skins/images/video_file.png\" class=\"file-preview-image\">\n\t
+    </div>
+    \n\t
+    <div class=\"file-footer\">
+        \n\t\t
+        <div class=\"file-footer-caption\">
+            \n\t\t\t<div class=\"file-caption-info\" rel=\"tooltip\">%s</div>
+            \n\t\t\t<div class=\"file-size-info\">(0 b)</div>
+            \n\t\t
+        </div>
+        \n\t\t
+        <div class=\"file-footer-bottom\">
+            \n\t\t\t
+            <div class=\"file-preview\">
+                <a class=\"clipboard-copy-link\" href=\"#\" rel=\"tooltip\" title=\"\">
+                    <i class=\"mediaupload-icon mediaupload-icon-copy\"></i>
+                </a>
+            </div>
+            \n\t\t\t
+            <div class=\"file-delete\">
+                <a class=\"file-delete-link\" href=\"#\">
+                    <i class=\"mediaupload-icon mediaupload-icon-trash\"></i>
+                </a>
+            </div>
+            \n\t\t
+        </div>
+        \n\t
+    </div>
+    \n
+</div>
+","uploaded_filename":"%s","xfvalue":"","link":false,"flink":false,"remote_error":null,"tinypng_error":false}
+`
+	res = strings.ReplaceAll(res, "\n", "")
+	res = strings.ReplaceAll(res, "\r", "")
+	res = fmt.Sprintf(res, success, targetFilePath, targetFilePath, targetFilePath)
+	return
+}
+
+func getUrl(url string, headers map[string]string, isFollowRedirect bool) (response *http.Response, err error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	req.Header.Set("DevSecret", "jdhhfUUEUo938HHqppxcbdGa8")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	client := http.Client{
+		Timeout: 5 * time.Second,
+	}
+	if isFollowRedirect {
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			// log.Printf("redirect %s to %s\n", via[0].URL, req.URL)
+			return nil // allow redirect
+			// return errors.NewService("Redirect")
+		}
+	}
+	return client.Do(req)
 }
