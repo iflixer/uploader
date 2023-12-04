@@ -18,6 +18,7 @@ func main() {
 	}
 
 	tmpDir := os.Getenv("TMP_FOLDER")
+	_ = os.MkdirAll(tmpDir, 0777)
 	vManagerUrl := os.Getenv("VMANAGER_URL")
 
 	s3secret := os.Getenv("S3_SECRET")
