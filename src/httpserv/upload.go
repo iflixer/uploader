@@ -2,6 +2,7 @@ package httpserv
 
 import (
 	"fmt"
+	"github.com/kennygrant/sanitize"
 	"io"
 	"log"
 	"mime/multipart"
@@ -121,6 +122,7 @@ func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunk
 			fmt.Printf("error sorting chunks:%s", err1)
 			return
 		}
+
 		log.Printf("chunks to combine (sorted): %d\n", len(files))
 		for _, file := range files {
 			log.Println("combine chunk:", file)
@@ -176,6 +178,9 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	_ = postId
 	fileNameIn := r.FormValue("name")
 	// fileExt := filepath.Ext(fileNameIn)
+	log.Println("original filename:", fileNameIn)
+	fileNameIn = sanitize.Path(fileNameIn)
+	log.Println("sanitized filename:", fileNameIn)
 	fileNameOut := fmt.Sprintf("%s_%s", postId, fileNameIn)
 
 	if file, _, err := r.FormFile("qqfile"); err == nil {
