@@ -178,9 +178,9 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	_ = postId
 	fileNameIn := r.FormValue("name")
 	// fileExt := filepath.Ext(fileNameIn)
-	log.Println("original filename:", fileNameIn)
+	// log.Println("original filename:", fileNameIn)
 	fileNameIn = sanitize.Path(fileNameIn)
-	log.Println("sanitized filename:", fileNameIn)
+	// log.Println("sanitized filename:", fileNameIn)
 	fileNameOut := fmt.Sprintf("%s_%s", postId, fileNameIn)
 
 	if file, _, err := r.FormFile("qqfile"); err == nil {
