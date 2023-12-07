@@ -101,20 +101,27 @@ func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunk
 		fileOut, err1 := os.OpenFile(filePathOut, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		defer func(fileOut multipart.File) { _ = fileOut.Close() }(fileOut)
 		if err1 != nil {
-			fmt.Printf("error create chunk:%s", err1)
+			fmt.Printf("error create output file:%s", err1)
 			return
 		}
 
-		files, err1 := filepath.Glob(filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut)))
+		pattern := filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut))
+		log.Printf("chunks pattern: %s\n", pattern)
+
+		files, err1 := filepath.Glob(pattern)
 		if err1 != nil {
 			fmt.Printf("error read tmp directory for chunks:%s", err1)
 			return
 		}
+
+		log.Printf("chunks to combine: %d\n", len(files))
+
 		files, err = sortChunks(files)
 		if err != nil {
 			fmt.Printf("error sorting chunks:%s", err1)
 			return
 		}
+		log.Printf("chunks to combine (sorted): %d\n", len(files))
 		for _, file := range files {
 			log.Println("combine chunk:", file)
 			fileChunk, err := os.Open(file)
