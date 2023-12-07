@@ -189,16 +189,19 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	targetPath := filepath.Join("inbox", fileNameOut)
 	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
 
-	// upload to storage
-	go s.uploadResult(filePathOut, targetPath)
-
-	// create task to convert
-	go s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath)
+	go s.finalize(filePathOut, targetPath, fileNameOut)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// w.Header().Set("Content-Encoding", "br")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(s.createDleResponse(targetPath)))
+}
+
+func (s *Server) finalize(filePathOut, targetPath, fileNameOut string) {
+	// upload to storage
+	s.uploadResult(filePathOut, targetPath)
+	// create task to convert
+	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath)
 }
 
 func (s *Server) uploadResult(filePathOut, targetPath string) {
