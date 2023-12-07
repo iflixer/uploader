@@ -189,13 +189,8 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	targetPath := filepath.Join("inbox", fileNameOut)
 	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
 
-	err := s.storage.Upload(filePathOut, targetPath)
-	if err != nil {
-		fmt.Printf("error uploading file to storage:%s", err)
-		return
-	}
-
-	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
+	// upload to storage
+	go s.uploadResult(filePathOut, targetPath)
 
 	// create task to convert
 	go s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath)
@@ -204,6 +199,16 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	// w.Header().Set("Content-Encoding", "br")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(s.createDleResponse(targetPath)))
+}
+
+func (s *Server) uploadResult(filePathOut, targetPath string) {
+	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
+	err := s.storage.Upload(filePathOut, targetPath)
+	if err != nil {
+		fmt.Printf("error uploading file to storage:%s", err)
+		return
+	}
+	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
 }
 
 func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath string) {
