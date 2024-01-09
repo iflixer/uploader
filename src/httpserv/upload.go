@@ -87,12 +87,12 @@ func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunk
 	f, err := os.OpenFile(chunkPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	defer func(f *os.File) { _ = f.Close() }(f)
 	if err != nil {
-		fmt.Printf("error create chunk:%s", err)
+		log.Printf("error create chunk:%s", err)
 		return
 	}
 
 	if _, err = io.Copy(f, in); err != nil {
-		fmt.Printf("error copy chunk:%s", err)
+		log.Printf("error copy chunk:%s", err)
 		return
 	}
 
@@ -102,7 +102,7 @@ func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunk
 		fileOut, err1 := os.OpenFile(filePathOut, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		defer func(fileOut multipart.File) { _ = fileOut.Close() }(fileOut)
 		if err1 != nil {
-			fmt.Printf("error create output file:%s", err1)
+			log.Printf("error create output file:%s", err1)
 			return
 		}
 
@@ -111,7 +111,7 @@ func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunk
 
 		files, err1 := filepath.Glob(pattern)
 		if err1 != nil {
-			fmt.Printf("error read tmp directory for chunks:%s", err1)
+			log.Printf("error read tmp directory for chunks:%s", err1)
 			return
 		}
 
@@ -119,7 +119,7 @@ func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunk
 
 		files, err = sortChunks(files)
 		if err != nil {
-			fmt.Printf("error sorting chunks:%s", err1)
+			log.Printf("error sorting chunks:%s", err1)
 			return
 		}
 
@@ -168,7 +168,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<20+512)
 	// r.ParseForm()
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		fmt.Printf("error ParseMultipartForm:%s", err)
+		log.Printf("error ParseMultipartForm:%s", err)
 		return
 	}
 	chunkNumber, _ := strconv.Atoi(r.FormValue("chunk"))
@@ -190,7 +190,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		fmt.Printf("error parse FormFile:%s", err)
+		log.Printf("error parse FormFile:%s", err)
 	}
 
 	log.Printf("file %s uploaded as %s\n", fileNameIn, fileNameOut)
@@ -217,7 +217,7 @@ func (s *Server) uploadResult(filePathOut, targetPath string) {
 	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
 	err := s.storage.Upload(filePathOut, targetPath)
 	if err != nil {
-		fmt.Printf("error uploading file to storage:%s\n", err)
+		log.Printf("error uploading file to storage:%s\n", err)
 		return
 	}
 	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
