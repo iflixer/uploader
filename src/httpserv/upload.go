@@ -171,11 +171,10 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("error ParseMultipartForm:%s", err)
 		return
 	}
-	textresp := ""
 	chunkNumber, _ := strconv.Atoi(r.FormValue("chunk"))
 	chunksTotal, _ := strconv.Atoi(r.FormValue("chunks"))
 	postId := r.FormValue("news_id")
-	_ = postId
+
 	fileNameIn := r.FormValue("name")
 	// fileExt := filepath.Ext(fileNameIn)
 	// log.Println("original filename:", fileNameIn)
@@ -193,7 +192,6 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	} else {
 		fmt.Printf("error parse FormFile:%s", err)
 	}
-	textresp += fmt.Sprintf("Successfully Uploaded File %s as %s .\n", fileNameIn, fileNameOut)
 
 	log.Printf("file %s uploaded as %s\n", fileNameIn, fileNameOut)
 
@@ -219,7 +217,7 @@ func (s *Server) uploadResult(filePathOut, targetPath string) {
 	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
 	err := s.storage.Upload(filePathOut, targetPath)
 	if err != nil {
-		fmt.Printf("error uploading file to storage:%s", err)
+		fmt.Printf("error uploading file to storage:%s\n", err)
 		return
 	}
 	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
@@ -238,7 +236,7 @@ func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath,
 				log.Println(err)
 			}
 			files, err := filepath.Glob(filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut)))
-			log.Printf("chunk files: %+v\n", files)
+			// log.Printf("chunk files: %+v\n", files)
 			if err != nil {
 				log.Println(err)
 			}
