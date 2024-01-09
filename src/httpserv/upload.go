@@ -225,7 +225,7 @@ func (s *Server) uploadResult(filePathOut, targetPath string) {
 
 func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId string) {
 	for {
-		u := fmt.Sprintf("%s?orig=%s&post_id=%d", s.vManagerAddUrl, targetPath, postId)
+		u := fmt.Sprintf("%s?orig=%s&post_id=%s", s.vManagerAddUrl, targetPath, postId)
 		log.Printf("sending request to vManager to create task: %s\n", u)
 		_, err := getUrl(u, nil, false)
 		if err == nil {
