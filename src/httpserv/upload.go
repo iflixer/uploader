@@ -125,16 +125,16 @@ func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunk
 
 		log.Printf("chunks to combine (sorted): %d\n", len(files))
 		for _, file := range files {
-			log.Println("combine chunk:", file)
+			// log.Println("combine chunk:", file)
 			fileChunk, err := os.Open(file)
 			if err != nil {
 				log.Printf("error open chunk: %s", err)
 			}
-			written, err := io.Copy(fileOut, fileChunk)
+			_, err = io.Copy(fileOut, fileChunk)
 			if err != nil {
 				log.Printf("error copy chunk: %s", err)
 			}
-			log.Println("written:", written)
+			// log.Println("written:", written)
 			_ = fileChunk.Close()
 		}
 		return
@@ -225,7 +225,8 @@ func (s *Server) uploadResult(filePathOut, targetPath string) {
 
 func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId string) {
 	for {
-		u := fmt.Sprintf("%s?orig=%s&post_id=%s", s.vManagerAddUrl, targetPath, postId)
+		fileNameOutWoExt := strings.TrimSuffix(fileNameOut, filepath.Ext(fileNameOut))
+		u := fmt.Sprintf("%s?orig=%s&post_id=%s&name=%s", s.vManagerAddUrl, targetPath, postId, fileNameOutWoExt)
 		log.Printf("sending request to vManager to create task: %s\n", u)
 		_, err := getUrl(u, nil, false)
 		if err == nil {
