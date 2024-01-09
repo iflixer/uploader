@@ -199,9 +199,8 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 
 	filePathOut := filepath.Join(s.tmpDir, fileNameOut)
 	targetPath := filepath.Join("inbox", fileNameOut)
-	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
 
-	go s.finalize(filePathOut, targetPath, fileNameOut)
+	go s.finalize(filePathOut, targetPath, fileNameOut, postId)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// w.Header().Set("Content-Encoding", "br")
@@ -209,11 +208,11 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(s.createDleResponse(targetPath)))
 }
 
-func (s *Server) finalize(filePathOut, targetPath, fileNameOut string) {
+func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	// upload to storage
 	s.uploadResult(filePathOut, targetPath)
 	// create task to convert
-	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath)
+	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId)
 }
 
 func (s *Server) uploadResult(filePathOut, targetPath string) {
@@ -226,9 +225,9 @@ func (s *Server) uploadResult(filePathOut, targetPath string) {
 	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
 }
 
-func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath string) {
+func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId string) {
 	for {
-		u := fmt.Sprintf("%s?orig=%s", s.vManagerAddUrl, targetPath)
+		u := fmt.Sprintf("%s?orig=%s&post_id=%d", s.vManagerAddUrl, targetPath, postId)
 		log.Printf("sending request to vManager to create task: %s\n", u)
 		_, err := getUrl(u, nil, false)
 		if err == nil {
