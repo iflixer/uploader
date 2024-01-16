@@ -11,25 +11,25 @@ import (
 
 func (s *Service) test() (err error) {
 	fmt.Println("testing storage connection:")
-	fmt.Print("head test.mp4...")
-	_, err = s.Head("test.mp4")
+	fmt.Println("head test.txt...")
+	_, err = s.Head("inbox/test.txt")
 	if err == nil {
 		fmt.Println("OK")
 	}
-	fmt.Print("download test.mp4...")
-	written, err := s.Download("test.mp4", "test.mp4")
+	fmt.Println("upload test.txt as inbox/test.txt...")
+	err = s.Upload("test.txt", "inbox/test.txt")
+	if err == nil {
+		fmt.Println("OK")
+	}
+	fmt.Println("download test.mp4...")
+	written, err := s.Download("inbox/test.mp4", "test.txt")
 	if err == nil {
 		fmt.Println("OK, bytes:", written)
 	}
-	fmt.Print("upload test.mp4 as test_.mp4...")
-	err = s.Upload("test.mp4", "test_.mp4")
-	if err == nil {
-		fmt.Println("OK")
-	}
 	fmt.Print("list test_.mp4...")
-	l, err := s.List("test_.mp4")
+	l, err := s.List("inbox/test.txt")
 	if err == nil {
-		fmt.Printf(" %+v ", l)
+		fmt.Printf(" %+v \n", l)
 		fmt.Println("OK")
 	}
 	fmt.Println("testing storage connection done")
