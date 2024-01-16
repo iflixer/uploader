@@ -11,26 +11,38 @@ import (
 
 func (s *Service) test() (err error) {
 	fmt.Println("testing storage connection:")
+	fmt.Println("accessKeyId:", s.accessKeyId)
+	fmt.Println("bucketName:", s.bucketName)
+	fmt.Println("endPoint:", s.endPoint)
+	fmt.Println("accessKeySecret(first 3 chars):", s.endPoint[:3])
 	fmt.Println("head test.txt...")
 	_, err = s.Head("inbox/test.txt")
 	if err == nil {
 		fmt.Println("OK")
+	} else {
+		fmt.Println("error", err)
 	}
 	fmt.Println("upload test.txt as inbox/test.txt...")
 	err = s.Upload("test.txt", "inbox/test.txt")
 	if err == nil {
 		fmt.Println("OK")
+	} else {
+		fmt.Println("error", err)
 	}
-	fmt.Println("download test.mp4...")
+	fmt.Println("download inbox/test.mp4...")
 	written, err := s.Download("inbox/test.mp4", "test.txt")
 	if err == nil {
 		fmt.Println("OK, bytes:", written)
+	} else {
+		fmt.Println("error", err)
 	}
-	fmt.Print("list test_.mp4...")
+	fmt.Println("list inbox/test.txt...")
 	l, err := s.List("inbox/test.txt")
 	if err == nil {
 		fmt.Printf(" %+v \n", l)
 		fmt.Println("OK")
+	} else {
+		fmt.Println("error", err)
 	}
 	fmt.Println("testing storage connection done")
 	return
