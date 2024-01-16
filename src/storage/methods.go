@@ -14,7 +14,7 @@ func (s *Service) test() (err error) {
 	fmt.Println("accessKeyId:", s.accessKeyId)
 	fmt.Println("bucketName:", s.bucketName)
 	fmt.Println("endPoint:", s.endPoint)
-	fmt.Println("accessKeySecret(first 3 chars):", s.endPoint[:3])
+	fmt.Println("accessKeySecret(first 3 chars):", s.accessKeySecret[:3])
 	fmt.Println("head test.txt...")
 	_, err = s.Head("inbox/test.txt")
 	if err == nil {
