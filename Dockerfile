@@ -11,6 +11,7 @@ FROM linuxserver/ffmpeg
 WORKDIR /app
 
 COPY --from=build-env /server/build/httpserver /app/httpserver
+COPY --from=build-env /server/src/test.txt /app/httpserver/test.txt
 
 #ENV GITHUB-SHA=<GITHUB-SHA>
 
