@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uploader/telegram"
 )
 
 /*func (s *Server) chunk(in multipart.File, fileNameIn, fileNameOut, contentRange string) (last bool, err error) {
@@ -182,9 +183,9 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	// log.Println("sanitized filename:", fileNameIn)
 	fileNameOut := fmt.Sprintf("%s_%s", postId, fileNameIn)
 
-	if file, _, err := r.FormFile("qqfile"); err == nil {
+	if file, fileHeader, err := r.FormFile("qqfile"); err == nil {
 		defer func(file multipart.File) { _ = file.Close() }(file)
-		log.Printf("chunk (%s) %d of %d\n", fileNameIn, chunkNumber, chunksTotal)
+		log.Printf("chunk (%s) %d (%d) of %d\n", fileNameIn, fileHeader.Size, chunkNumber, chunksTotal)
 		if last, err := s.chunk(file, fileNameOut, chunkNumber, chunksTotal); !last {
 			s.returnResp(w, "added chunk", err)
 			return
@@ -211,6 +212,8 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	s.uploadResult(filePathOut, targetPath)
 	// create task to convert
 	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId)
+
+	s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("file uploaded (post %s): %s", postId, targetPath))
 }
 
 func (s *Server) uploadResult(filePathOut, targetPath string) {

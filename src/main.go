@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"github.com/joho/godotenv"
 	"log"
 	"os"
 	"strings"
 	"uploader/httpserv"
 	"uploader/storage"
+	"uploader/telegram"
 )
 
 func main() {
@@ -35,7 +37,23 @@ func main() {
 		log.Fatal(err)
 	}
 
-	srvServer, err := httpserv.NewServer("3333", tmpDir, vManagerUrl, storageService)
+	telegramApiToken := os.Getenv("TELEGRAM_APITOKEN")
+	if os.Getenv("TELEGRAM_APITOKEN_FILE") != "" {
+		telegramApiToken_, err := os.ReadFile(os.Getenv("TELEGRAM_APITOKEN_FILE"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		telegramApiToken = strings.TrimSpace(string(telegramApiToken_))
+	}
+
+	telegramService, err := telegram.NewService(telegramApiToken)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	telegramService.Send(telegram.ChanVideo, fmt.Sprintf("uloader started"))
+
+	srvServer, err := httpserv.NewServer("3333", tmpDir, vManagerUrl, storageService, telegramService)
 	if err != nil {
 		log.Fatal(err)
 	}

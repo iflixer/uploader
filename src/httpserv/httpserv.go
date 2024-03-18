@@ -11,17 +11,19 @@ import (
 	"net/http"
 	"os"
 	"uploader/storage"
+	"uploader/telegram"
 )
 
 // this service should watch the new tasks in DB and process them
 
 type Server struct {
-	mux            *http.ServeMux
-	port           string
-	storage        *storage.Service
-	tmpDir         string
-	vManagerUrl    string
-	vManagerAddUrl string
+	mux             *http.ServeMux
+	port            string
+	storage         *storage.Service
+	telegramService *telegram.Service
+	tmpDir          string
+	vManagerUrl     string
+	vManagerAddUrl  string
 }
 
 type Resp struct {
@@ -120,13 +122,14 @@ func (s *Server) stringHash(str string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func NewServer(port string, tmpDir, vManagerUrl string, storage *storage.Service) (*Server, error) {
+func NewServer(port string, tmpDir, vManagerUrl string, storage *storage.Service, telegramService *telegram.Service) (*Server, error) {
 	s := &Server{
-		port:           port,
-		storage:        storage,
-		tmpDir:         tmpDir,
-		vManagerUrl:    vManagerUrl,
-		vManagerAddUrl: vManagerUrl + "task_add",
+		port:            port,
+		storage:         storage,
+		tmpDir:          tmpDir,
+		telegramService: telegramService,
+		vManagerUrl:     vManagerUrl,
+		vManagerAddUrl:  vManagerUrl + "task_add",
 	}
 	s.init()
 	return s, nil
