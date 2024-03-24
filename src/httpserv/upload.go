@@ -213,7 +213,14 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	// create task to convert
 	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId)
 
-	s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("file uploaded (post %s): %s", postId, targetPath))
+	// check if there are no tasks in progress and send notification
+	files, err := filepath.Glob(s.tmpDir)
+	if err != nil {
+		log.Println("error check tmp dir: ", err)
+	}
+	if len(files) == 0 {
+		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("all files have been uploaded, queue is empty"))
+	}
 }
 
 func (s *Server) uploadResult(filePathOut, targetPath string) {
