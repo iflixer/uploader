@@ -220,7 +220,7 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	}
 	log.Printf("files qty after clean: %d", len(files))
 	if len(files) == 1 {
-		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("all files have been uploaded, queue is empty"))
+		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD done"))
 	}
 }
 
