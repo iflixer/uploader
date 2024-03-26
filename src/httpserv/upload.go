@@ -214,7 +214,7 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId)
 
 	// check if there are no tasks in progress and send notification
-	files, err := filepath.Glob(s.tmpDir)
+	files, err := filepath.Glob(filepath.Join(s.tmpDir, "*"))
 	if err != nil {
 		log.Println("error check tmp dir: ", err)
 	}
