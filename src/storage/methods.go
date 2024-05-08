@@ -30,7 +30,7 @@ func (s *Service) test() (err error) {
 		fmt.Println("error", err)
 	}
 	fmt.Println("download inbox/test.mp4...")
-	written, err := s.Download("inbox/test.mp4", "test.txt")
+	written, err := s.Download("inbox/test.txt", "test.txt")
 	if err == nil {
 		fmt.Println("OK, bytes:", written)
 	} else {

@@ -12,7 +12,10 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	log.Println("START")
+
 	var err error
 
 	if err := godotenv.Load("../.env"); err != nil {
