@@ -2,7 +2,6 @@ package httpserv
 
 import (
 	"fmt"
-	"github.com/kennygrant/sanitize"
 	"io"
 	"log"
 	"mime/multipart"
@@ -14,7 +13,11 @@ import (
 	"strings"
 	"time"
 	"uploader/telegram"
+
+	"github.com/kennygrant/sanitize"
 )
+
+const maxChunkSize = int64(2 << 20) // 2 MiB
 
 /*func (s *Server) chunk(in multipart.File, fileNameIn, fileNameOut, contentRange string) (last bool, err error) {
 	// bytes 0-999/1012602
@@ -78,69 +81,97 @@ import (
 	return
 }*/
 
-func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunksTotal int) (last bool, err error) {
-	last = false
-	chunkBaseName := fmt.Sprintf("chunk_%s", fileNameOut)
+func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunksTotal int) (bool, error) {
+	// Безопасное имя
+	base := filepath.Base(fileNameOut)
+	if base != fileNameOut {
+		return false, fmt.Errorf("invalid file name")
+	}
 
-	chunkPath := filepath.Join(s.tmpDir, fmt.Sprintf("%s_%d", chunkBaseName, chunkNumber))
-	filePathOut := filepath.Join(s.tmpDir, fileNameOut)
+	chunkBase := "chunk_" + base
+	chunkPath := filepath.Join(s.tmpDir, fmt.Sprintf("%s_%d", chunkBase, chunkNumber))
+	filePathOut := filepath.Join(s.tmpDir, base)
 
-	f, err := os.OpenFile(chunkPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	defer func(f *os.File) { _ = f.Close() }(f)
+	// Чанк: перезаписываем (если номер пришёл повторно)
+	f, err := os.OpenFile(chunkPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		log.Printf("error create chunk:%s", err)
-		return
+		return false, fmt.Errorf("open chunk: %w", err)
 	}
-
 	if _, err = io.Copy(f, in); err != nil {
-		log.Printf("error copy chunk:%s", err)
-		return
+		_ = f.Close()
+		return false, fmt.Errorf("write chunk: %w", err)
+	}
+	if err = f.Sync(); err != nil { // чтобы следующий этап видел полный чанк
+		_ = f.Close()
+		return false, fmt.Errorf("fsync chunk: %w", err)
+	}
+	_ = f.Close()
+
+	// Если это последний номер — пробуем собрать
+	if chunkNumber != chunksTotal-1 {
+		return false, nil
 	}
 
-	if chunkNumber == chunksTotal-1 { // last chunk
-		log.Println("combine file")
-		last = true
-		fileOut, err1 := os.OpenFile(filePathOut, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		defer func(fileOut multipart.File) { _ = fileOut.Close() }(fileOut)
-		if err1 != nil {
-			log.Printf("error create output file:%s", err1)
-			return
+	// Проверить, что все чанки на месте
+	pattern := filepath.Join(s.tmpDir, chunkBase+"_*")
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return false, fmt.Errorf("glob: %w", err)
+	}
+	if len(files) != chunksTotal {
+		// Ещё не все чанки долетели — пусть вызывающий повторит позднее
+		return false, fmt.Errorf("not all chunks present: have=%d need=%d", len(files), chunksTotal)
+	}
+
+	// Отсортировать по номеру
+	sort.Slice(files, func(i, j int) bool {
+		getIdx := func(p string) int {
+			// .../chunk_<name>_<n>
+			_, last := filepath.Split(p)
+			u := strings.TrimPrefix(last, chunkBase+"_")
+			n, _ := strconv.Atoi(u)
+			return n
 		}
+		return getIdx(files[i]) < getIdx(files[j])
+	})
 
-		pattern := filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut))
-		log.Printf("chunks pattern: %s\n", pattern)
-
-		files, err1 := filepath.Glob(pattern)
-		if err1 != nil {
-			log.Printf("error read tmp directory for chunks:%s", err1)
-			return
-		}
-
-		log.Printf("chunks to combine: %d\n", len(files))
-
-		files, err = sortChunks(files)
+	// Собираем во временный файл → атомарный rename
+	tmpOut := filePathOut + ".assembling"
+	out, err := os.OpenFile(tmpOut, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return false, fmt.Errorf("open out: %w", err)
+	}
+	buf := make([]byte, 1<<20) // 1MiB буфер
+	for _, p := range files {
+		inp, err := os.Open(p)
 		if err != nil {
-			log.Printf("error sorting chunks:%s", err1)
-			return
+			out.Close()
+			return false, fmt.Errorf("open chunk %s: %w", p, err)
 		}
-
-		log.Printf("chunks to combine (sorted): %d\n", len(files))
-		for _, file := range files {
-			// log.Println("combine chunk:", file)
-			fileChunk, err := os.Open(file)
-			if err != nil {
-				log.Printf("error open chunk: %s", err)
-			}
-			_, err = io.Copy(fileOut, fileChunk)
-			if err != nil {
-				log.Printf("error copy chunk: %s", err)
-			}
-			// log.Println("written:", written)
-			_ = fileChunk.Close()
+		if _, err = io.CopyBuffer(out, inp, buf); err != nil {
+			inp.Close()
+			out.Close()
+			return false, fmt.Errorf("copy %s: %w", p, err)
 		}
-		return
+		inp.Close()
 	}
-	return
+	if err = out.Sync(); err != nil {
+		out.Close()
+		return false, fmt.Errorf("fsync out: %w", err)
+	}
+	if err = out.Close(); err != nil {
+		return false, fmt.Errorf("close out: %w", err)
+	}
+	if err = os.Rename(tmpOut, filePathOut); err != nil {
+		return false, fmt.Errorf("rename: %w", err)
+	}
+
+	// (опционально) удалить чанки
+	for _, p := range files {
+		_ = os.Remove(p)
+	}
+
+	return true, nil
 }
 
 func sortChunks(data []string) ([]string, error) {
@@ -164,52 +195,100 @@ func sortChunks(data []string) ([]string, error) {
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
-	// log.Println("post upload ")
-	// limit the POST body size to 32.5Mb
-	r.Body = http.MaxBytesReader(w, r.Body, 32<<20+512)
-	// r.ParseForm()
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		log.Printf("error ParseMultipartForm:%s", err)
-		return
-	}
+	// Ограничиваем размер запроса
+	r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize)
+
+	// Парсим номер чанка и общее количество
 	chunkNumber, _ := strconv.Atoi(r.FormValue("chunk"))
 	chunksTotal, _ := strconv.Atoi(r.FormValue("chunks"))
-	postId := r.FormValue("news_id")
+	postID := r.FormValue("news_id")
 
-	fileNameIn := r.FormValue("name")
-	// fileExt := filepath.Ext(fileNameIn)
-	// log.Println("original filename:", fileNameIn)
-	fileNameIn = sanitize.Path(fileNameIn)
-	// log.Println("sanitized filename:", fileNameIn)
-	fileNameOut := fmt.Sprintf("%s_%s", postId, fileNameIn)
+	nameIn := sanitize.Path(r.FormValue("name"))
+	if nameIn == "" || filepath.Base(nameIn) != nameIn {
+		http.Error(w, "invalid file name", http.StatusBadRequest)
+		return
+	}
+	fileNameOut := fmt.Sprintf("%s_%s", postID, nameIn)
 
-	if file, fileHeader, err := r.FormFile("qqfile"); err == nil {
-		defer func(file multipart.File) { _ = file.Close() }(file)
-		log.Printf("chunk (%s) %d (%d) of %d\n", fileNameIn, fileHeader.Size, chunkNumber, chunksTotal)
-		if last, err := s.chunk(file, fileNameOut, chunkNumber, chunksTotal); !last {
-			s.returnResp(w, "added chunk", err)
-			return
-		}
-	} else {
-		log.Printf("error parse FormFile:%s", err)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		http.Error(w, "invalid multipart", http.StatusBadRequest)
+		return
 	}
 
-	log.Printf("file %s uploaded as %s\n", fileNameIn, fileNameOut)
+	// ищем сам файл
+	var filePart io.Reader
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			http.Error(w, "multipart read error", http.StatusBadRequest)
+			return
+		}
+		if p.FormName() == "qqfile" {
+			filePart = p
+			break
+		}
+	}
+	if filePart == nil {
+		http.Error(w, "file part not found", http.StatusBadRequest)
+		return
+	}
 
-	filePathOut := filepath.Join(s.tmpDir, fileNameOut)
+	partPath := filepath.Join(s.tmpDir, fileNameOut+".part")
+	flags := os.O_CREATE | os.O_WRONLY
+	if chunkNumber == 0 {
+		flags |= os.O_TRUNC
+	} else {
+		flags |= os.O_APPEND
+	}
+
+	f, err := os.OpenFile(partPath, flags, 0644)
+	if err != nil {
+		http.Error(w, "open tmp file error", http.StatusInternalServerError)
+		return
+	}
+	if _, err = io.Copy(f, filePart); err != nil {
+		_ = f.Close()
+		http.Error(w, "write tmp file error", http.StatusInternalServerError)
+		return
+	}
+	_ = f.Close()
+
+	// если не последний чанк
+	if chunkNumber != chunksTotal-1 {
+		s.returnResp(w, "chunk accepted", nil)
+		return
+	}
+
+	// последний чанк — финализируем
+	finalPath := filepath.Join(s.tmpDir, fileNameOut)
+	_ = os.Remove(finalPath)
+	if err := os.Rename(partPath, finalPath); err != nil {
+		http.Error(w, "finalize error", http.StatusInternalServerError)
+		return
+	}
+
 	targetPath := filepath.Join("inbox", fileNameOut)
-
-	go s.finalize(filePathOut, targetPath, fileNameOut, postId)
+	go s.finalize(finalPath, targetPath, fileNameOut, postID)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// w.Header().Set("Content-Encoding", "br")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(s.createDleResponse(targetPath)))
 }
 
 func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	// upload to storage
-	s.uploadResult(filePathOut, targetPath)
+	err := s.uploadResult(filePathOut, targetPath)
+	if err != nil {
+		log.Printf("error uploading file to storage: %s\n", err)
+		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD error: %s", err))
+		return
+	}
+	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
+
 	// create task to convert
 	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId)
 
@@ -220,18 +299,21 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	}
 	log.Printf("files qty after clean: %d", len(files))
 	if len(files) == 0 {
-		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD done"))
+		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD done: %s", targetPath))
 	}
+	return
+
 }
 
-func (s *Server) uploadResult(filePathOut, targetPath string) {
+func (s *Server) uploadResult(filePathOut, targetPath string) (err error) {
 	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
-	err := s.storage.Upload(filePathOut, targetPath)
+	err = s.storage.Upload(filePathOut, targetPath)
 	if err != nil {
 		log.Printf("error uploading file to storage:%s\n", err)
 		return
 	}
 	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
+	return nil
 }
 
 func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId string) {
@@ -241,23 +323,26 @@ func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath,
 		log.Printf("sending request to vManager to create task: %s\n", u)
 		_, err := getUrl(u, nil, false)
 		if err == nil {
-			// remove tmp files
-			log.Println("removing temporary files...")
-			err := os.Remove(filePathOut)
-			if err != nil {
-				log.Println(err)
-			}
-			files, err := filepath.Glob(filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut)))
-			// log.Printf("chunk files: %+v\n", files)
-			if err != nil {
-				log.Println(err)
-			}
-			for _, f := range files {
-				if err := os.Remove(f); err != nil {
-					log.Println(err)
-				}
-			}
+			log.Printf("task created for %s\n", fileNameOut)
+			s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD task created: %s", fileNameOut))
 			return
+			// remove tmp files
+			// log.Println("removing temporary files...")
+			// err := os.Remove(filePathOut)
+			// if err != nil {
+			// 	log.Println(err)
+			// }
+			// files, err := filepath.Glob(filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut)))
+			// // log.Printf("chunk files: %+v\n", files)
+			// if err != nil {
+			// 	log.Println(err)
+			// }
+			// for _, f := range files {
+			// 	if err := os.Remove(f); err != nil {
+			// 		log.Println(err)
+			// 	}
+			// }
+			// return
 		} else {
 			log.Println("task add error, will try again in 10 seconds:", err)
 			time.Sleep(time.Second * 10)

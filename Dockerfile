@@ -1,5 +1,5 @@
 # build environment
-FROM golang:1.23 as build-env
+FROM golang:1.23 AS build-env
 WORKDIR /server
 COPY src/go.mod ./
 RUN go mod download
