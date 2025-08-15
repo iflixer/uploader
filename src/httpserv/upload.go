@@ -206,6 +206,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 
 	nameIn := sanitize.Path(r.FormValue("name"))
 	if nameIn == "" || filepath.Base(nameIn) != nameIn {
+		log.Println("invalid file name:", nameIn)
 		http.Error(w, "invalid file name", http.StatusBadRequest)
 		return
 	}
@@ -217,6 +218,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 
 	mr, err := r.MultipartReader()
 	if err != nil {
+		log.Println("error parsing multipart:", err)
 		http.Error(w, "invalid multipart", http.StatusBadRequest)
 		return
 	}
@@ -229,6 +231,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
+			log.Println("error reading multipart:", err)
 			http.Error(w, "multipart read error", http.StatusBadRequest)
 			return
 		}
@@ -238,6 +241,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if filePart == nil {
+		log.Println("file part not found:", nameIn)
 		http.Error(w, "file part not found", http.StatusBadRequest)
 		return
 	}
@@ -252,11 +256,13 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 
 	f, err := os.OpenFile(partPath, flags, 0644)
 	if err != nil {
+		log.Println("error opening tmp file:", err)
 		http.Error(w, "open tmp file error", http.StatusInternalServerError)
 		return
 	}
 	if _, err = io.Copy(f, filePart); err != nil {
 		_ = f.Close()
+		log.Println("error writing tmp file:", err)
 		http.Error(w, "write tmp file error", http.StatusInternalServerError)
 		return
 	}
@@ -272,6 +278,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	finalPath := filepath.Join(s.tmpDir, fileNameOut)
 	_ = os.Remove(finalPath)
 	if err := os.Rename(partPath, finalPath); err != nil {
+		log.Println("finalize error:", err)
 		http.Error(w, "finalize error", http.StatusInternalServerError)
 		return
 	}
