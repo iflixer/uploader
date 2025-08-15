@@ -248,7 +248,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 // refinalize takes the file already in the tmpDir and finalizes it
 func (s *Server) refinalize(w http.ResponseWriter, r *http.Request) {
 
-	nameIn := sanitize.Path(r.FormValue("filename"))
+	nameIn := r.FormValue("filename")
 	if nameIn == "" || filepath.Base(nameIn) != nameIn {
 		http.Error(w, "invalid file name", http.StatusBadRequest)
 		return
