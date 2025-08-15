@@ -245,6 +245,24 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(s.createDleResponse(targetPath)))
 }
 
+// refinalize takes the file already in the tmpDir and finalizes it
+func (s *Server) refinalize(w http.ResponseWriter, r *http.Request) {
+
+	nameIn := sanitize.Path(r.FormValue("filename"))
+	if nameIn == "" || filepath.Base(nameIn) != nameIn {
+		http.Error(w, "invalid file name", http.StatusBadRequest)
+		return
+	}
+	finalPath := filepath.Join(s.tmpDir, nameIn)
+	postID := strings.SplitN(nameIn, "_", 2)[0]
+	targetPath := filepath.Join("inbox", nameIn)
+	go s.finalize(finalPath, targetPath, nameIn, postID)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte("OK, reupload started"))
+}
+
 // appendChunk пишет чанк в отдельный файл, а на последнем — объединяет.
 func (s *Server) appendChunk(r io.Reader, fileNameOut string, chunkNumber, chunksTotal int) error {
 	// путь к чанку

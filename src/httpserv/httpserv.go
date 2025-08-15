@@ -4,7 +4,6 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
-	"github.com/rs/cors"
 	"io"
 	"log"
 	"mime/multipart"
@@ -12,6 +11,8 @@ import (
 	"os"
 	"uploader/storage"
 	"uploader/telegram"
+
+	"github.com/rs/cors"
 )
 
 // this service should watch the new tasks in DB and process them
@@ -39,6 +40,7 @@ func (s *Server) init() {
 	mux.HandleFunc("/favicon.ico", s.get404)
 	mux.HandleFunc("/upload", s.upload)
 	mux.HandleFunc("/alive", s.alive)
+	mux.HandleFunc("/reupload", s.reupload)
 
 	s.mux = mux
 }
