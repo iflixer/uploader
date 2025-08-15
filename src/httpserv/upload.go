@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"mime"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -196,99 +195,96 @@ func sortChunks(data []string) ([]string, error) {
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
-	// Ограничиваем размер запроса
+	// Ограничиваем тело
 	r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize)
 
-	// Парсим номер чанка и общее количество
+	// ВАЖНО: либо этот путь, либо MultipartReader — но не оба
+	if err := r.ParseMultipartForm(maxChunkSize); err != nil {
+		http.Error(w, "invalid multipart: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	chunkNumber, _ := strconv.Atoi(r.FormValue("chunk"))
 	chunksTotal, _ := strconv.Atoi(r.FormValue("chunks"))
 	postID := r.FormValue("news_id")
 
 	nameIn := sanitize.Path(r.FormValue("name"))
 	if nameIn == "" || filepath.Base(nameIn) != nameIn {
-		log.Println("invalid file name:", nameIn)
 		http.Error(w, "invalid file name", http.StatusBadRequest)
 		return
 	}
 	fileNameOut := fmt.Sprintf("%s_%s", postID, nameIn)
 
-	ct := r.Header.Get("Content-Type")
-	media, params, _ := mime.ParseMediaType(ct)
-	log.Printf("CT=%q media=%q boundary=%q", ct, media, params["boundary"])
-
-	mr, err := r.MultipartReader()
+	file, hdr, err := r.FormFile("qqfile")
 	if err != nil {
-		log.Println("error parsing multipart:", err)
-		http.Error(w, "invalid multipart", http.StatusBadRequest)
+		http.Error(w, "file part not found: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	log.Printf("chunk %d/%d size=%d name=%s", chunkNumber, chunksTotal, hdr.Size, hdr.Filename)
+
+	// последовательно пишем в .part (как обсуждали ранее)
+	if err := s.appendChunk(file, fileNameOut, chunkNumber, chunksTotal); err != nil {
+		http.Error(w, "write chunk: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// ищем сам файл
-	var filePart io.Reader
-	for {
-		p, err := mr.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Println("error reading multipart:", err)
-			http.Error(w, "multipart read error", http.StatusBadRequest)
-			return
-		}
-		if p.FormName() == "qqfile" {
-			filePart = p
-			break
-		}
-	}
-	if filePart == nil {
-		log.Println("file part not found:", nameIn)
-		http.Error(w, "file part not found", http.StatusBadRequest)
-		return
-	}
-
-	partPath := filepath.Join(s.tmpDir, fileNameOut+".part")
-	flags := os.O_CREATE | os.O_WRONLY
-	if chunkNumber == 0 {
-		flags |= os.O_TRUNC
-	} else {
-		flags |= os.O_APPEND
-	}
-
-	f, err := os.OpenFile(partPath, flags, 0644)
-	if err != nil {
-		log.Println("error opening tmp file:", err)
-		http.Error(w, "open tmp file error", http.StatusInternalServerError)
-		return
-	}
-	if _, err = io.Copy(f, filePart); err != nil {
-		_ = f.Close()
-		log.Println("error writing tmp file:", err)
-		http.Error(w, "write tmp file error", http.StatusInternalServerError)
-		return
-	}
-	_ = f.Close()
-
-	// если не последний чанк
 	if chunkNumber != chunksTotal-1 {
 		s.returnResp(w, "chunk accepted", nil)
 		return
 	}
 
-	// последний чанк — финализируем
+	// последний чанк → финализируем и запускаем обработку
 	finalPath := filepath.Join(s.tmpDir, fileNameOut)
-	_ = os.Remove(finalPath)
-	if err := os.Rename(partPath, finalPath); err != nil {
-		log.Println("finalize error:", err)
-		http.Error(w, "finalize error", http.StatusInternalServerError)
-		return
-	}
-
 	targetPath := filepath.Join("inbox", fileNameOut)
 	go s.finalize(finalPath, targetPath, fileNameOut, postID)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(s.createDleResponse(targetPath)))
+}
+
+// appendChunk пишет чанк в отдельный файл, а на последнем — объединяет.
+func (s *Server) appendChunk(r io.Reader, fileNameOut string, chunkNumber, chunksTotal int) error {
+	// путь к чанку
+	chunkPath := filepath.Join(s.tmpDir, fmt.Sprintf("%s_%d.part", fileNameOut, chunkNumber))
+	out, err := os.OpenFile(chunkPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("open chunk: %w", err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, r); err != nil {
+		return fmt.Errorf("write chunk: %w", err)
+	}
+
+	// если это последний чанк → склеиваем
+	if chunkNumber == chunksTotal-1 {
+		finalPath := filepath.Join(s.tmpDir, fileNameOut)
+		fout, err := os.OpenFile(finalPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			return fmt.Errorf("create final file: %w", err)
+		}
+		defer fout.Close()
+
+		for i := 0; i < chunksTotal; i++ {
+			partPath := filepath.Join(s.tmpDir, fmt.Sprintf("%s_%d.part", fileNameOut, i))
+			fin, err := os.Open(partPath)
+			if err != nil {
+				return fmt.Errorf("open part %d: %w", i, err)
+			}
+			if _, err := io.Copy(fout, fin); err != nil {
+				fin.Close()
+				return fmt.Errorf("copy part %d: %w", i, err)
+			}
+			fin.Close()
+			// после сборки можно удалить
+			_ = os.Remove(partPath)
+		}
+	}
+
+	return nil
 }
 
 func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
