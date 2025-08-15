@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"fmt"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -33,26 +35,51 @@ func (s *Service) List(path string) (list []string, err error) {
 }
 
 func NewService(bucketName, endPoint, accessKeyId, accessKeySecret string) (*Service, error) {
-	r2Resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-		return aws.Endpoint{
-			// URL:               fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountId),
-			URL:               endPoint,
-			HostnameImmutable: true,
-		}, nil
-	})
+	// r2Resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+	// 	return aws.Endpoint{
+	// 		// URL:               fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountId),
+	// 		URL:               endPoint,
+	// 		HostnameImmutable: true,
+	// 	}, nil
+	// })
 
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithEndpointResolverWithOptions(r2Resolver),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKeyId, accessKeySecret, "")),
+	// cfg, err := config.LoadDefaultConfig(context.TODO(),
+	// 	config.WithEndpointResolverWithOptions(r2Resolver),
+	// 	config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKeyId, accessKeySecret, "")),
+	// )
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// cfg.Region = "auto"
+
+	// 1. базовый конфиг
+	cfg, err := config.LoadDefaultConfig(
+		context.TODO(),
+		config.WithRegion("auto"), // для R2 всегда auto
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(accessKeyId, accessKeySecret, ""),
+		),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load config: %w", err)
 	}
-	cfg.Region = "auto"
 
-	s3Client := s3.NewFromConfig(cfg)
+	// 2. endpoint Cloudflare R2
+	//endpoint := "https://" + accountID + ".r2.cloudflarestorage.com"
+
+	// 3. создаём клиента S3
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		// современный вариант (если твоя версия поддерживает):
+		o.BaseEndpoint = aws.String(endPoint)
+
+		// если выдаст "unknown field BaseEndpoint",
+		// замени на:
+		// o.EndpointResolver = s3.EndpointResolverFromURL(endpoint)
+
+		o.UsePathStyle = false // R2 работает в virtual-hosted-style
+	})
 	s := &Service{
-		s3Client:        s3Client,
+		s3Client:        client,
 		bucketName:      bucketName,
 		endPoint:        endPoint,
 		accessKeyId:     accessKeyId,

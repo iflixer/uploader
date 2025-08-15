@@ -268,12 +268,13 @@ func (s *Server) appendChunk(r io.Reader, fileNameOut string, chunkNumber, chunk
 		}
 		defer fout.Close()
 
-		for i := 0; i < chunksTotal; i++ {
+		for i := range chunksTotal {
 			partPath := filepath.Join(s.tmpDir, fmt.Sprintf("%s_%d.part", fileNameOut, i))
 			fin, err := os.Open(partPath)
 			if err != nil {
 				return fmt.Errorf("open part %d: %w", i, err)
 			}
+			// io.Copy двигает указатель, поэтому не нужен O_APPEND
 			if _, err := io.Copy(fout, fin); err != nil {
 				fin.Close()
 				return fmt.Errorf("copy part %d: %w", i, err)
@@ -314,7 +315,7 @@ func (s *Server) uploadResult(filePathOut, targetPath string) (err error) {
 	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
 	err = s.storage.Upload(filePathOut, targetPath)
 	if err != nil {
-		log.Printf("error uploading file to storage:%s\n", err)
+		// log.Printf("error uploading file to storage:%s\n", err)
 		return
 	}
 	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
