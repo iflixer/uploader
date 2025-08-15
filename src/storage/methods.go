@@ -3,10 +3,16 @@ package storage
 import (
 	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"io"
+	"mime"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 func (s *Service) test() (err error) {
@@ -57,7 +63,7 @@ func (s *Service) head(objectName string) (length int64, err error) {
 	if err != nil {
 		return 0, err
 	}
-	return resp.ContentLength, nil
+	return *resp.ContentLength, nil
 }
 
 func (s *Service) list(path string) (res []string, err error) {
@@ -80,27 +86,69 @@ func (s *Service) list(path string) (res []string, err error) {
 	return result, nil
 }
 
-func (s *Service) upload(localFile, remoteFile string) error {
-	f, err := os.OpenFile(localFile, os.O_RDONLY, 0644)
+func (s *Service) upload(localFile, remoteKey string) error {
+	// remoteKey без ведущего "/" — в S3 это часть Key
+	remoteKey = strings.TrimLeft(remoteKey, "/")
+
+	f, err := os.Open(localFile)
 	if err != nil {
 		return err
 	}
-	object := s3.PutObjectInput{
-		Bucket: aws.String(s.bucketName), // The path to the directory you want to upload the object to, starting with your Space name.
-		Key:    aws.String(remoteFile),   // Object key, referenced whenever you want to access this file later.
-		Body:   f,                        // The object's contents.
-		/*		ACL:    aws.String("public-read"),                  // Defines Access-control List (ACL) permissions, such as private or public.
-				Metadata: map[string]*string{ // Required. Defines metadata tags.
-					"x-amz-meta-my-key": aws.String("your-value"),
-				},*/
+	defer f.Close()
+
+	// Контекст с таймаутом на всю загрузку
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	// Определим Content-Type по расширению (лучше так, чем заглушка)
+	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(localFile)))
+	if ct == "" {
+		ct = "application/octet-stream"
 	}
 
-	_, err = s.s3Client.PutObject(context.TODO(), &object)
-	if err != nil {
-		return err
-	}
-	return nil
+	// Создаём Uploader с управляемой конкуренцией/размером части
+	upl := manager.NewUploader(s.s3Client, func(u *manager.Uploader) {
+		u.Concurrency = 3             // 2–4 обычно достаточно
+		u.PartSize = 32 * 1024 * 1024 // 32 MiB; S3 требует ≥5 MiB
+		// u.LeavePartsOnError = false     // по умолчанию false; можно явно
+	})
+
+	_, err = upl.Upload(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucketName),
+		Key:         aws.String(remoteKey),
+		Body:        f,
+		ContentType: aws.String(ct),
+		// Не ставь ACL публичной, если не нужно:
+		// ACL:         s3.ObjectCannedACLPrivate,
+		// Метаданные по желанию:
+		// Metadata: map[string]string{"x-amz-meta-origin": "uploader"},
+		// Кэширование для статики:
+		CacheControl: aws.String("public, max-age=31536000, immutable"),
+	})
+	return err
 }
+
+// func (s *Service) upload(localFile, remoteFile string) error {
+// 	f, err := os.OpenFile(localFile, os.O_RDONLY, 0644)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	object := s3.PutObjectInput{
+// 		Bucket: aws.String(s.bucketName), // The path to the directory you want to upload the object to, starting with your Space name.
+// 		Key:    aws.String(remoteFile),   // Object key, referenced whenever you want to access this file later.
+// 		Body:   f,                        // The object's contents.
+// 		/*		ACL:    aws.String("public-read"),                  // Defines Access-control List (ACL) permissions, such as private or public.
+// 				Metadata: map[string]*string{ // Required. Defines metadata tags.
+// 					"x-amz-meta-my-key": aws.String("your-value"),
+// 				},*/
+// 	}
+
+// 	_, err = s.s3Client.PutObject(context.TODO(), &object)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	return nil
+// }
 
 func (s *Service) download(remoteFile, localFile string) (written int64, err error) {
 	// file = strings.Replace(file, "/"+bucketName+"/", "", 1)
