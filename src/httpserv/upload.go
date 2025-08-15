@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -210,6 +211,10 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	fileNameOut := fmt.Sprintf("%s_%s", postID, nameIn)
 
+	ct := r.Header.Get("Content-Type")
+	media, params, _ := mime.ParseMediaType(ct)
+	log.Printf("CT=%q media=%q boundary=%q", ct, media, params["boundary"])
+
 	mr, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, "invalid multipart", http.StatusBadRequest)
@@ -301,8 +306,6 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	if len(files) == 0 {
 		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD done: %s", targetPath))
 	}
-	return
-
 }
 
 func (s *Server) uploadResult(filePathOut, targetPath string) (err error) {
