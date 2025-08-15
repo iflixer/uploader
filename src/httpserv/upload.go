@@ -222,7 +222,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	log.Printf("chunk %d/%d size=%d name=%s", chunkNumber, chunksTotal, hdr.Size, hdr.Filename)
+	log.Printf("chunk %d/%d size=%d name=%s", chunkNumber, chunksTotal, hdr.Size, nameIn)
 
 	// последовательно пишем в .part (как обсуждали ранее)
 	if err := s.appendChunk(file, fileNameOut, chunkNumber, chunksTotal); err != nil {
@@ -295,7 +295,6 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD error: %s", err))
 		return
 	}
-	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
 
 	// create task to convert
 	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId)
