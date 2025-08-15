@@ -40,7 +40,7 @@ func (s *Server) init() {
 	mux.HandleFunc("/favicon.ico", s.get404)
 	mux.HandleFunc("/upload", s.upload)
 	mux.HandleFunc("/alive", s.alive)
-	mux.HandleFunc("/reupload", s.reupload)
+	mux.HandleFunc("/refinalize", s.refinalize)
 
 	s.mux = mux
 }
