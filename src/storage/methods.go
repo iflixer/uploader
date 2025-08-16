@@ -21,7 +21,7 @@ func (s *Service) test() (err error) {
 	fmt.Println("testing storage connection:")
 	fmt.Println("accessKeyId:", s.accessKeyId)
 	fmt.Println("bucketName:", s.bucketName)
-	fmt.Println("endPoint:", s.endPoint)
+	fmt.Println("accountID:", s.accountID)
 	fmt.Println("accessKeySecret(first 3 chars):", s.accessKeySecret[:3])
 	fmt.Println("head test.txt...")
 	_, err = s.Head("inbox/test.txt")
@@ -86,6 +86,17 @@ func (s *Service) list(path string) (res []string, err error) {
 	}
 
 	return result, nil
+}
+
+func (s *Service) UploadR2WithProgress(localFile, remoteKey string) (err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
+	defer cancel()
+
+	uploadR2WithProgress(ctx, s.s3Client, s.bucketName, remoteKey, localFile, func(done, total int64, mbps float64) {
+		pct := float64(done) / float64(total) * 100
+		fmt.Printf("\r%6.2f%%  %8.2f MiB/s", pct, mbps)
+	})
+	return
 }
 
 func (s *Service) upload(localFile, remoteKey string) error {

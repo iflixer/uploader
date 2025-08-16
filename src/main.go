@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
-	"github.com/joho/godotenv"
 	"log"
 	"os"
 	"strings"
 	"uploader/httpserv"
 	"uploader/storage"
 	"uploader/telegram"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -35,7 +36,7 @@ func main() {
 		s3secret = strings.TrimSpace(string(s3secret_))
 	}
 
-	storageService, err := storage.NewService(os.Getenv("S3_BUCKET"), os.Getenv("S3_ENDPOINT"), os.Getenv("S3_KEY_ID"), s3secret)
+	storageService, err := storage.NewService(os.Getenv("S3_BUCKET"), os.Getenv("S3_ACCOUNT_ID"), os.Getenv("S3_KEY_ID"), s3secret)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -332,6 +332,7 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 func (s *Server) uploadResult(filePathOut, targetPath string) (err error) {
 	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
 	err = s.storage.Upload(filePathOut, targetPath)
+
 	if err != nil {
 		// log.Printf("error uploading file to storage:%s\n", err)
 		return
