@@ -108,7 +108,7 @@ func (s *Service) upload(localFile, remoteKey string) error {
 
 	// Создаём Uploader с управляемой конкуренцией/размером части
 	upl := manager.NewUploader(s.s3Client, func(u *manager.Uploader) {
-		u.Concurrency = 3             // 2–4 обычно достаточно
+		u.Concurrency = 8             // 2–4 обычно достаточно
 		u.PartSize = 32 * 1024 * 1024 // 32 MiB; S3 требует ≥5 MiB
 		// u.LeavePartsOnError = false     // по умолчанию false; можно явно
 	})
