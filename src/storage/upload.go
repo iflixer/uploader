@@ -2,172 +2,120 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"mime"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"github.com/minio/minio-go/v7"
 )
 
-// --- прогресс для multipart: Uploader читает Body через ReadAt, поэтому считаем в ReadAt ---
-type progressFile struct {
-	*os.File
-	total int64
-	read  int64
-	cb    func(done, total int64)
-}
+// UploadWithProgress: заливает файл в R2 с прогрессом и внешними ретраями
+// objectKey — путь в бакете, например "inbox/video.mp4" (без ведущего "/")
+func (c *Client) UploadWithProgress(ctx context.Context, filePath, objectKey string, on ProgressFunc) error {
+	objectKey = strings.TrimLeft(objectKey, "/")
 
-func (p *progressFile) ReadAt(b []byte, off int64) (int, error) {
-	n, err := p.File.ReadAt(b, off)
-	if n > 0 && p.cb != nil {
-		done := atomic.AddInt64(&p.read, int64(n))
-		p.cb(done, p.total)
-	}
-	return n, err
-}
-
-// ---- прогресс для single PUT: ReadSeeker ----
-type countingReadSeeker struct {
-	rs io.ReadSeeker
-	n  int64
-	cb func(done int64)
-}
-
-func (c *countingReadSeeker) Read(p []byte) (int, error) {
-	n, err := c.rs.Read(p)
-	if n > 0 && c.cb != nil {
-		c.n += int64(n)
-		c.cb(c.n)
-	}
-	return n, err
-}
-func (c *countingReadSeeker) Seek(off int64, whence int) (int64, error) {
-	return c.rs.Seek(off, whence)
-}
-
-type ProgressFunc func(done, total int64, mbps float64)
-
-func uploadR2WithProgress(ctx context.Context, s3cli *s3.Client, bucket, key, path string, on ProgressFunc) error {
-	f, err := os.Open(path)
+	f, err := os.Open(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open: %w", err)
 	}
 	defer f.Close()
 
 	st, err := f.Stat()
 	if err != nil {
-		return err
+		return fmt.Errorf("stat: %w", err)
 	}
 	total := st.Size()
-	if total < 0 {
-		return fmt.Errorf("unknown file size for %s", path)
-	}
 
-	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
+	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(filePath)))
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
 
-	// троттлим уведомления прогресса
-	var lastDone int64
-	var lastTs = time.Now()
-	progress := func(done, total int64) {
-		now := time.Now()
-		dt := now.Sub(lastTs).Seconds()
-		if dt < 0.2 {
-			return
-		}
-		delta := done - lastDone
-		if delta <= 0 || dt <= 0 {
-			return
-		}
-		mbps := (float64(delta) / (1024 * 1024)) / dt
-		lastDone = done
-		lastTs = now
-		if on != nil {
-			on(done, total, mbps)
-		}
+	opts := minio.PutObjectOptions{
+		ContentType: ct,
+		// Можно зафиксировать размер части для MPU (помогает стабилизировать скорость):
+		// PartSize: 16 * 1024 * 1024, // 16 MiB
+		// SendContentMd5: true,       // если нужно строго проверять целостность
 	}
 
-	const singlePutThreshold = int64(200 * 1024 * 1024) // 200 MiB — всё, что меньше, грузим одним PUT
-
-	oneAttempt := func() error {
-		// SINGLE PUT
-		if total <= singlePutThreshold {
-			if _, err := f.Seek(0, io.SeekStart); err != nil {
-				return err
-			}
-			body := &countingReadSeeker{rs: f, cb: func(n int64) { progress(n, total) }}
-
-			out, err := s3cli.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String(bucket),
-				Key:           aws.String(key),
-				Body:          body, // ReadSeeker — важен для ретраев
-				ContentType:   aws.String(ct),
-				ContentLength: aws.Int64(total), // фиксируем длину — без chunked/CRC проблем
-				CacheControl:  aws.String("public, max-age=31536000, immutable"),
-			})
-			_ = out
-			if err == nil && on != nil {
-				on(total, total, 0)
-			}
-			return err
-		}
-
-		// MULTIPART
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		pf := &progressFile{File: f, total: total, cb: progress}
 
-		upl := manager.NewUploader(s3cli, func(u *manager.Uploader) {
-			u.PartSize = 32 * 1024 * 1024 // 16–32 MiB — стабильнее на R2
-			u.Concurrency = 2             // 1–3; 8 часто даёт 5xx
-			u.LeavePartsOnError = false
-		})
-
-		_, err := upl.Upload(ctx, &s3.PutObjectInput{
-			Bucket:       aws.String(bucket),
-			Key:          aws.String(key),
-			Body:         pf, // ReadAt-счётчик
-			ContentType:  aws.String(ct),
-			CacheControl: aws.String("public, max-age=31536000, immutable"),
-		})
-		if err == nil && on != nil {
-			on(total, total, 0)
+		tr := &teeCountReader{
+			r:          f,
+			totalSize:  total,
+			lastReport: time.Now(),
+			cb: func(done, total int64, mbps float64) {
+				if on == nil {
+					return
+				}
+				// Не рисуем «100%» до успешного завершения:
+				if done >= total && total > 0 {
+					done = total - 1
+				}
+				on(done, total, mbps)
+			},
 		}
-		return err
-	}
 
-	// внешние ретраи — только для 5xx/сетевых временных
-	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		if err := oneAttempt(); err == nil {
+		_, err := c.cli.PutObject(ctx, c.bucket, objectKey, tr, total, opts)
+		if err == nil {
+			// финальный 100% только ПОСЛЕ успеха
+			if on != nil {
+				on(total, total, 0)
+			}
 			return nil
-		} else {
-			lastErr = err
-			var re *smithyhttp.ResponseError
-			var ne net.Error
-			if errors.As(err, &re) && re.HTTPStatusCode() >= 500 && attempt < 3 {
-				time.Sleep(time.Duration(attempt) * time.Second)
-				continue
-			}
-			if errors.As(err, &ne) && ne.Temporary() && attempt < 3 {
-				time.Sleep(time.Duration(attempt) * time.Second)
-				continue
-			}
-			break
 		}
+		lastErr = err
+		time.Sleep(time.Duration(attempt) * time.Second) // небольшой backoff
 	}
 	return fmt.Errorf("upload failed after retries: %w", lastErr)
+}
+
+type ProgressFunc func(done, total int64, mbps float64)
+
+type teeCountReader struct {
+	r          io.Reader
+	totalSize  int64 // общий размер файла (для процента)
+	doneTotal  int64 // накопленный прогресс
+	winBytes   int64 // байты за окно (для скорости)
+	lastReport time.Time
+	cb         ProgressFunc
+}
+
+func (t *teeCountReader) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if n > 0 {
+		atomic.AddInt64(&t.doneTotal, int64(n))
+		atomic.AddInt64(&t.winBytes, int64(n))
+
+		// троттлинг отчётов ~5/сек
+		now := time.Now()
+		if now.Sub(t.lastReport) >= 200*time.Millisecond && t.cb != nil {
+			done := atomic.LoadInt64(&t.doneTotal)
+			wb := atomic.SwapInt64(&t.winBytes, 0)
+
+			dt := now.Sub(t.lastReport).Seconds()
+			mbps := 0.0
+			if dt > 0 {
+				mbps = (float64(wb) / (1024 * 1024)) / dt
+			}
+
+			// не даём вылезать за total, на всякий случай
+			if done > t.totalSize && t.totalSize > 0 {
+				done = t.totalSize
+			}
+
+			t.cb(done, t.totalSize, mbps)
+			t.lastReport = now
+		}
+	}
+	return n, err
 }

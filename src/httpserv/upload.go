@@ -19,68 +19,6 @@ import (
 
 const maxChunkSize = int64(2 << 20) // 2 MiB
 
-/*func (s *Server) chunk(in multipart.File, fileNameIn, fileNameOut, contentRange string) (last bool, err error) {
-	// bytes 0-999/1012602
-	rangeAndSize := strings.Split(contentRange, " ")
-	rangeParts := strings.Split(rangeAndSize[1], "/")
-	fileSize := rangeParts[1]   // 1012602
-	chunkRange := rangeParts[0] // 0-999
-	curr := strings.Split(chunkRange, "-")
-	// chunkStart := curr[0] // 0
-	chunkEnd := curr[1] // 999
-
-	chunkBaseName := fmt.Sprintf("chunk_%s", fileNameOut)
-
-	chunkPath := filepath.Join(s.tmpDir, fmt.Sprintf("%s_%s", chunkBaseName, chunkRange))
-	log.Printf("chunkPath: %s\n", chunkPath)
-
-	f, err := os.OpenFile(chunkPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	defer f.Close()
-	if err != nil {
-		fmt.Errorf("error create chunk:%s", err)
-		return
-	}
-
-	if _, err = io.Copy(f, in); err != nil {
-		fmt.Errorf("error copy chunk:%s", err)
-		return
-	}
-
-	e, _ := strconv.Atoi(chunkEnd)
-	t, _ := strconv.Atoi(fileSize)
-	if e == t-1 { // last chunk
-		last = true
-		fileOut, err1 := os.OpenFile(chunkPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		defer fileOut.Close()
-		if err1 != nil {
-			fmt.Errorf("error create chunk:%s", err1)
-			return
-		}
-
-		files, err1 := os.ReadDir(s.tmpDir)
-		if err1 != nil {
-			fmt.Errorf("error read tmp directory:%s", err1)
-			return
-		}
-		for _, file := range files {
-			if !file.IsDir() && strings.HasPrefix(file.Name(), chunkBaseName) {
-				fileChunk, err1 := os.Open(chunkPath)
-				defer fileChunk.Close()
-				if err1 != nil {
-					fmt.Errorf("error read chunk:%s", err1)
-					return
-				}
-				if _, err2 := io.Copy(fileOut, fileChunk); err2 != nil {
-					fmt.Errorf("error copy chunk to result file:%s", err2)
-					return
-				}
-			}
-		}
-		return
-	}
-	return
-}*/
-
 func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunksTotal int) (bool, error) {
 	// Безопасное имя
 	base := filepath.Base(fileNameOut)
@@ -310,7 +248,7 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	// upload to storage
 	err := s.uploadResult(filePathOut, targetPath)
 	if err != nil {
-		log.Printf("error uploading file %s to storage: %s\n", fileNameOut, err)
+		log.Printf("error uploading file %s -> %s to storage: %s\n", filePathOut, targetPath, err)
 		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD error: %s", err))
 		return
 	}

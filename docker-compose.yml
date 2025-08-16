@@ -1,4 +1,4 @@
-version: '3.8'
+
 services:
   uploader:
     build: .
@@ -7,15 +7,16 @@ services:
       S3_BUCKET: ${S3_BUCKET}
       S3_KEY_ID: ${S3_KEY_ID}
       S3_SECRET: ${S3_SECRET}
-      LOCAL_STORAGE_PATH: /files
+      TMP_FOLDER: /files
       TELEGRAM_APITOKEN: ${TELEGRAM_APITOKEN}
+      VMANAGER_URL: https://vmanager.testme.cloud/
       MYSQL_URL: mysql://root:1@tcp(mysql:3306)/converter
     ports:
       - "127.0.0.1:9000:3333"
     volumes:
       - data:/data
-      - ./tmp/files:/files
-      - /Users/ivanezko/Downloads:/downloads
+      # - ./tmp/files:/files
+      - /Users/ivanezko/Downloads:/files
     depends_on:
       mysql:
         condition: service_healthy
