@@ -20,7 +20,6 @@ import (
 )
 
 // --- прогресс для multipart: Uploader читает Body через ReadAt, поэтому считаем в ReadAt ---
-
 type progressFile struct {
 	*os.File
 	total int64
@@ -30,21 +29,35 @@ type progressFile struct {
 
 func (p *progressFile) ReadAt(b []byte, off int64) (int, error) {
 	n, err := p.File.ReadAt(b, off)
-	if n > 0 {
-		newDone := atomic.AddInt64(&p.read, int64(n))
-		if p.cb != nil {
-			p.cb(newDone, p.total)
-		}
+	if n > 0 && p.cb != nil {
+		done := atomic.AddInt64(&p.read, int64(n))
+		p.cb(done, p.total)
 	}
 	return n, err
 }
 
-// ---- высокоуровневая загрузка с прогрессом и обработкой smithyhttp.ResponseError ----
+// ---- прогресс для single PUT: ReadSeeker ----
+type countingReadSeeker struct {
+	rs io.ReadSeeker
+	n  int64
+	cb func(done int64)
+}
+
+func (c *countingReadSeeker) Read(p []byte) (int, error) {
+	n, err := c.rs.Read(p)
+	if n > 0 && c.cb != nil {
+		c.n += int64(n)
+		c.cb(c.n)
+	}
+	return n, err
+}
+func (c *countingReadSeeker) Seek(off int64, whence int) (int64, error) {
+	return c.rs.Seek(off, whence)
+}
 
 type ProgressFunc func(done, total int64, mbps float64)
 
 func uploadR2WithProgress(ctx context.Context, s3cli *s3.Client, bucket, key, path string, on ProgressFunc) error {
-	// Открываем файл
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -56,17 +69,16 @@ func uploadR2WithProgress(ctx context.Context, s3cli *s3.Client, bucket, key, pa
 		return err
 	}
 	total := st.Size()
+	if total < 0 {
+		return fmt.Errorf("unknown file size for %s", path)
+	}
 
-	// MIME по расширению
 	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
 
-	// Решаем: single PUT или multipart
-	const singlePutThreshold = int64(200 * 1024 * 1024) // < 200 MiB — обычный PutObject надёжнее
-
-	// Колбэк прогресса: троттлим до ~5/сек
+	// троттлим уведомления прогресса
 	var lastDone int64
 	var lastTs = time.Now()
 	progress := func(done, total int64) {
@@ -76,10 +88,10 @@ func uploadR2WithProgress(ctx context.Context, s3cli *s3.Client, bucket, key, pa
 			return
 		}
 		delta := done - lastDone
-		mbps := 0.0
-		if dt > 0 && delta > 0 {
-			mbps = (float64(delta) / (1024 * 1024)) / dt
+		if delta <= 0 || dt <= 0 {
+			return
 		}
+		mbps := (float64(delta) / (1024 * 1024)) / dt
 		lastDone = done
 		lastTs = now
 		if on != nil {
@@ -87,38 +99,43 @@ func uploadR2WithProgress(ctx context.Context, s3cli *s3.Client, bucket, key, pa
 		}
 	}
 
-	// Один прогон (для внешнего ретрая)
-	putOnce := func() error {
-		if total > 0 && total <= singlePutThreshold {
-			// Single PUT: вешаем прогресс через TeeReader
+	const singlePutThreshold = int64(200 * 1024 * 1024) // 200 MiB — всё, что меньше, грузим одним PUT
+
+	oneAttempt := func() error {
+		// SINGLE PUT
+		if total <= singlePutThreshold {
 			if _, err := f.Seek(0, io.SeekStart); err != nil {
 				return err
 			}
-			pr := &teeCountReader{r: f, cb: func(n int64) { progress(n, total) }}
-			_, err := s3cli.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:       aws.String(bucket),
-				Key:          aws.String(key),
-				Body:         pr,
-				ContentType:  aws.String(ct),
-				CacheControl: aws.String("public, max-age=31536000, immutable"),
+			body := &countingReadSeeker{rs: f, cb: func(n int64) { progress(n, total) }}
+
+			out, err := s3cli.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(bucket),
+				Key:           aws.String(key),
+				Body:          body, // ReadSeeker — важен для ретраев
+				ContentType:   aws.String(ct),
+				ContentLength: aws.Int64(total), // фиксируем длину — без chunked/CRC проблем
+				CacheControl:  aws.String("public, max-age=31536000, immutable"),
 			})
+			_ = out
 			if err == nil && on != nil {
 				on(total, total, 0)
 			}
 			return err
 		}
 
-		// Multipart
+		// MULTIPART
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
 		pf := &progressFile{File: f, total: total, cb: progress}
 
 		upl := manager.NewUploader(s3cli, func(u *manager.Uploader) {
-			u.PartSize = 32 * 1024 * 1024 // 16–64 MiB — подбирайте под канал
-			u.Concurrency = 2             // 1–3: устойчиво для R2
+			u.PartSize = 32 * 1024 * 1024 // 16–32 MiB — стабильнее на R2
+			u.Concurrency = 2             // 1–3; 8 часто даёт 5xx
 			u.LeavePartsOnError = false
 		})
+
 		_, err := upl.Upload(ctx, &s3.PutObjectInput{
 			Bucket:       aws.String(bucket),
 			Key:          aws.String(key),
@@ -132,26 +149,20 @@ func uploadR2WithProgress(ctx context.Context, s3cli *s3.Client, bucket, key, pa
 		return err
 	}
 
-	// Внешний ретрай: повторяем весь upload для 5xx/временных
+	// внешние ретраи — только для 5xx/сетевых временных
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		if err := putOnce(); err == nil {
+		if err := oneAttempt(); err == nil {
 			return nil
 		} else {
 			lastErr = err
-			// Разбираем smithyhttp.ResponseError
-			var respErr *smithyhttp.ResponseError
-			if errors.As(err, &respErr) {
-				code := respErr.HTTPStatusCode()
-				// Ретраим только 5xx и сетевые "временные"
-				if code >= 500 && code < 600 && attempt < 3 {
-					time.Sleep(time.Duration(attempt) * time.Second) // небольшой backoff
-					continue
-				}
+			var re *smithyhttp.ResponseError
+			var ne net.Error
+			if errors.As(err, &re) && re.HTTPStatusCode() >= 500 && attempt < 3 {
+				time.Sleep(time.Duration(attempt) * time.Second)
+				continue
 			}
-			// Можно добавить специальные кейсы (context deadline, временный net.Error)
-			var nerr net.Error
-			if errors.As(err, &nerr) && nerr.Temporary() && attempt < 3 {
+			if errors.As(err, &ne) && ne.Temporary() && attempt < 3 {
 				time.Sleep(time.Duration(attempt) * time.Second)
 				continue
 			}
@@ -159,22 +170,4 @@ func uploadR2WithProgress(ctx context.Context, s3cli *s3.Client, bucket, key, pa
 		}
 	}
 	return fmt.Errorf("upload failed after retries: %w", lastErr)
-}
-
-// teeCountReader — простой прогресс для single PUT (читает линейно).
-type teeCountReader struct {
-	r  io.Reader
-	n  int64
-	cb func(n int64)
-}
-
-func (t *teeCountReader) Read(p []byte) (int, error) {
-	n, err := t.r.Read(p)
-	if n > 0 {
-		t.n += int64(n)
-		if t.cb != nil {
-			t.cb(t.n)
-		}
-	}
-	return n, err
 }
