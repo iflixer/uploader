@@ -102,7 +102,7 @@ func uploadR2WithProgress(ctx context.Context, s3cli *s3.Client, bucket, key, pa
 				ContentType:  aws.String(ct),
 				CacheControl: aws.String("public, max-age=31536000, immutable"),
 			})
-			if on != nil {
+			if err == nil && on != nil {
 				on(total, total, 0)
 			}
 			return err
@@ -126,7 +126,7 @@ func uploadR2WithProgress(ctx context.Context, s3cli *s3.Client, bucket, key, pa
 			ContentType:  aws.String(ct),
 			CacheControl: aws.String("public, max-age=31536000, immutable"),
 		})
-		if on != nil {
+		if err == nil && on != nil {
 			on(total, total, 0)
 		}
 		return err

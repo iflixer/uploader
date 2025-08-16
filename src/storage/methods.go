@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"os"
 	"path/filepath"
@@ -30,13 +31,18 @@ func (s *Service) test() (err error) {
 	} else {
 		fmt.Println("error", err)
 	}
+
 	fmt.Println("upload test.txt as inbox/test.txt...")
 	err = s.Upload("test.txt", "inbox/test.txt")
+	// err = s.Upload("/downloads/10690_o.jardim.de.isabel.2024.1080p.web-dl.dual.2.0.mkv", "inbox/tmp.test")
 	if err == nil {
 		fmt.Println("OK")
 	} else {
 		fmt.Println("error", err)
 	}
+
+	// os.Exit(0) // exit after upload test
+
 	fmt.Println("download inbox/test.mp4...")
 	written, err := s.Download("inbox/test.txt", "test.txt")
 	if err == nil {
@@ -44,6 +50,7 @@ func (s *Service) test() (err error) {
 	} else {
 		fmt.Println("error", err)
 	}
+
 	fmt.Println("list inbox/test.txt...")
 	l, err := s.List("inbox/test.txt")
 	if err == nil {
@@ -92,9 +99,11 @@ func (s *Service) UploadR2WithProgress(localFile, remoteKey string) (err error) 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 	defer cancel()
 
-	uploadR2WithProgress(ctx, s.s3Client, s.bucketName, remoteKey, localFile, func(done, total int64, mbps float64) {
+	log.Println("Uploading to R2:", localFile, remoteKey)
+
+	err = uploadR2WithProgress(ctx, s.s3Client, s.bucketName, remoteKey, localFile, func(done, total int64, mbps float64) {
 		pct := float64(done) / float64(total) * 100
-		fmt.Printf("\r%6.2f%%  %8.2f MiB/s", pct, mbps)
+		log.Printf("Uploading %s: %6.2f%%  %8.2f MiB/s\n", remoteKey, pct, mbps)
 	})
 	return
 }

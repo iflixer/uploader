@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -55,7 +54,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	telegramService.Send(telegram.ChanVideo, fmt.Sprintf("uloader started"))
+	telegramService.Send(telegram.ChanVideo, "uloader started")
 
 	srvServer, err := httpserv.NewServer("3333", tmpDir, vManagerUrl, storageService, telegramService)
 	if err != nil {

@@ -15,6 +15,7 @@ services:
     volumes:
       - data:/data
       - ./tmp/files:/files
+      - /Users/ivanezko/Downloads:/downloads
     depends_on:
       mysql:
         condition: service_healthy
