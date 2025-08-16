@@ -310,7 +310,7 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	// upload to storage
 	err := s.uploadResult(filePathOut, targetPath)
 	if err != nil {
-		log.Printf("error uploading file to storage: %s\n", err)
+		log.Printf("error uploading file %s to storage: %s\n", fileNameOut, err)
 		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD error: %s", err))
 		return
 	}
@@ -342,10 +342,16 @@ func (s *Server) uploadResult(filePathOut, targetPath string) (err error) {
 
 func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId string) {
 	for {
+		info, err := os.Stat(filePathOut)
+		if err != nil {
+			fmt.Println("Ошибка:", err)
+			return
+		}
+		fmt.Printf("Размер файла %s: %d байт\n", fileNameOut, info.Size())
 		fileNameOutWoExt := strings.TrimSuffix(fileNameOut, filepath.Ext(fileNameOut))
-		u := fmt.Sprintf("%s?orig=%s&post_id=%s&name=%s", s.vManagerAddUrl, targetPath, postId, fileNameOutWoExt)
+		u := fmt.Sprintf("%s?orig=%s&post_id=%s&name=%s&size=%d", s.vManagerAddUrl, targetPath, postId, fileNameOutWoExt, info.Size())
 		log.Printf("sending request to vManager to create task: %s\n", u)
-		_, err := getUrl(u, nil, false)
+		_, err = getUrl(u, nil, false)
 		if err == nil {
 			log.Printf("task created for %s\n", fileNameOut)
 			s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD task created: %s", fileNameOut))
