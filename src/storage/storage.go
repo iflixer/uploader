@@ -3,8 +3,11 @@ package storage
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -52,13 +55,27 @@ func NewService(bucketName, endPoint, accessKeyId, accessKeySecret string) (*Ser
 	// }
 	// cfg.Region = "auto"
 
+	tr := &http.Transport{
+		MaxIdleConns:        256,
+		MaxIdleConnsPerHost: 128,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DisableCompression:  true,
+		ForceAttemptHTTP2:   false,
+	}
+	httpClient := &http.Client{Transport: tr, Timeout: 0}
+
 	// 1. базовый конфиг
 	cfg, err := config.LoadDefaultConfig(
 		context.TODO(),
+		config.WithHTTPClient(httpClient),
 		config.WithRegion("auto"), // для R2 всегда auto
 		config.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(accessKeyId, accessKeySecret, ""),
 		),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 8 })
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
