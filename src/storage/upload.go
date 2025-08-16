@@ -96,9 +96,9 @@ func (t *teeCountReader) Read(p []byte) (int, error) {
 		atomic.AddInt64(&t.doneTotal, int64(n))
 		atomic.AddInt64(&t.winBytes, int64(n))
 
-		// троттлинг отчётов ~5/сек
+		// троттлинг отчётов 1 раз в 30 секунд
 		now := time.Now()
-		if now.Sub(t.lastReport) >= 200*time.Millisecond && t.cb != nil {
+		if now.Sub(t.lastReport) >= 30*time.Second && t.cb != nil {
 			done := atomic.LoadInt64(&t.doneTotal)
 			wb := atomic.SwapInt64(&t.winBytes, 0)
 

@@ -68,11 +68,6 @@ func (s *Server) alive(_ http.ResponseWriter, _ *http.Request) {
 	// log.Println("get " + r.RequestURI)
 }
 
-func (s *Server) files(w http.ResponseWriter, r *http.Request) {
-	log.Println(r.URL.Path + " range: " + r.Header.Get("Range"))
-	http.ServeFile(w, r, r.URL.Path)
-}
-
 func (s *Server) get404(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }

@@ -27,6 +27,12 @@ type Service struct {
 	accessKeySecret string
 }
 
+func (s *Service) Stat(remoteFile string) (objectSize int64, err error) {
+	ctx := context.Background()
+	objectSize, err = s.Client.Stat(ctx, s.bucketName, remoteFile)
+	return
+}
+
 func (s *Service) Upload(localFile, remoteFile string) (err error) {
 	ctx := context.Background()
 	err = s.Client.UploadWithProgress(ctx,

@@ -4,133 +4,20 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 	"uploader/telegram"
 
+	"github.com/go-errors/errors"
 	"github.com/kennygrant/sanitize"
 )
 
 const maxChunkSize = int64(2 << 20) // 2 MiB
-
-func (s *Server) chunk(in multipart.File, fileNameOut string, chunkNumber, chunksTotal int) (bool, error) {
-	// Безопасное имя
-	base := filepath.Base(fileNameOut)
-	if base != fileNameOut {
-		return false, fmt.Errorf("invalid file name")
-	}
-
-	chunkBase := "chunk_" + base
-	chunkPath := filepath.Join(s.tmpDir, fmt.Sprintf("%s_%d", chunkBase, chunkNumber))
-	filePathOut := filepath.Join(s.tmpDir, base)
-
-	// Чанк: перезаписываем (если номер пришёл повторно)
-	f, err := os.OpenFile(chunkPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return false, fmt.Errorf("open chunk: %w", err)
-	}
-	if _, err = io.Copy(f, in); err != nil {
-		_ = f.Close()
-		return false, fmt.Errorf("write chunk: %w", err)
-	}
-	if err = f.Sync(); err != nil { // чтобы следующий этап видел полный чанк
-		_ = f.Close()
-		return false, fmt.Errorf("fsync chunk: %w", err)
-	}
-	_ = f.Close()
-
-	// Если это последний номер — пробуем собрать
-	if chunkNumber != chunksTotal-1 {
-		return false, nil
-	}
-
-	// Проверить, что все чанки на месте
-	pattern := filepath.Join(s.tmpDir, chunkBase+"_*")
-	files, err := filepath.Glob(pattern)
-	if err != nil {
-		return false, fmt.Errorf("glob: %w", err)
-	}
-	if len(files) != chunksTotal {
-		// Ещё не все чанки долетели — пусть вызывающий повторит позднее
-		return false, fmt.Errorf("not all chunks present: have=%d need=%d", len(files), chunksTotal)
-	}
-
-	// Отсортировать по номеру
-	sort.Slice(files, func(i, j int) bool {
-		getIdx := func(p string) int {
-			// .../chunk_<name>_<n>
-			_, last := filepath.Split(p)
-			u := strings.TrimPrefix(last, chunkBase+"_")
-			n, _ := strconv.Atoi(u)
-			return n
-		}
-		return getIdx(files[i]) < getIdx(files[j])
-	})
-
-	// Собираем во временный файл → атомарный rename
-	tmpOut := filePathOut + ".assembling"
-	out, err := os.OpenFile(tmpOut, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return false, fmt.Errorf("open out: %w", err)
-	}
-	buf := make([]byte, 1<<20) // 1MiB буфер
-	for _, p := range files {
-		inp, err := os.Open(p)
-		if err != nil {
-			out.Close()
-			return false, fmt.Errorf("open chunk %s: %w", p, err)
-		}
-		if _, err = io.CopyBuffer(out, inp, buf); err != nil {
-			inp.Close()
-			out.Close()
-			return false, fmt.Errorf("copy %s: %w", p, err)
-		}
-		inp.Close()
-	}
-	if err = out.Sync(); err != nil {
-		out.Close()
-		return false, fmt.Errorf("fsync out: %w", err)
-	}
-	if err = out.Close(); err != nil {
-		return false, fmt.Errorf("close out: %w", err)
-	}
-	if err = os.Rename(tmpOut, filePathOut); err != nil {
-		return false, fmt.Errorf("rename: %w", err)
-	}
-
-	// (опционально) удалить чанки
-	for _, p := range files {
-		_ = os.Remove(p)
-	}
-
-	return true, nil
-}
-
-func sortChunks(data []string) ([]string, error) {
-	var lastErr error
-	sort.Slice(data, func(i, j int) bool {
-		aArr := strings.Split(data[i], "_")
-		a, err := strconv.Atoi(aArr[len(aArr)-1])
-		if err != nil {
-			lastErr = err
-			return false
-		}
-		bArr := strings.Split(data[j], "_")
-		b, err := strconv.Atoi(bArr[len(bArr)-1])
-		if err != nil {
-			lastErr = err
-			return false
-		}
-		return a < b
-	})
-	return data, lastErr
-}
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	// Ограничиваем тело
@@ -246,7 +133,7 @@ func (s *Server) appendChunk(r io.Reader, fileNameOut string, chunkNumber, chunk
 
 func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	// upload to storage
-	err := s.uploadResult(filePathOut, targetPath)
+	fileSize, err := s.uploadResult(filePathOut, targetPath)
 	if err != nil {
 		log.Printf("error uploading file %s -> %s to storage: %s\n", filePathOut, targetPath, err)
 		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD error: %s", err))
@@ -254,7 +141,7 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	}
 
 	// create task to convert
-	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId)
+	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId, fileSize)
 
 	// check if there are no tasks in progress and send notification
 	files, err := filepath.Glob(filepath.Join(s.tmpDir, "*"))
@@ -267,51 +154,54 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	}
 }
 
-func (s *Server) uploadResult(filePathOut, targetPath string) (err error) {
-	log.Printf("uploading %s to storage as %s\n", filePathOut, targetPath)
-	err = s.storage.Upload(filePathOut, targetPath)
-
+func (s *Server) uploadResult(filePathOut, targetPath string) (fileSize int64, err error) {
+	info, err := os.Stat(filePathOut)
 	if err != nil {
-		// log.Printf("error uploading file to storage:%s\n", err)
 		return
 	}
-	log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
-	return nil
-}
+	fileSize = info.Size()
+	for i := range 3 { // retry 3 times
+		log.Printf("uploading %s to storage as %s retry %d\n", filePathOut, targetPath, i+1)
+		log.Printf("Размер локального файла %s: %d байт\n", filePathOut, info.Size())
 
-func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId string) {
-	for {
-		info, err := os.Stat(filePathOut)
+		err = s.storage.Upload(filePathOut, targetPath)
 		if err != nil {
-			fmt.Println("Ошибка:", err)
 			return
 		}
-		fmt.Printf("Размер файла %s: %d байт\n", fileNameOut, info.Size())
+		objectSize, err := s.storage.Stat(targetPath)
+		if err != nil {
+			log.Printf("Ошибка получения размера файла %s из R2: %s\n", targetPath, err)
+		} else {
+			log.Printf("Размер файла в R2 %s: %d байт\n", targetPath, objectSize)
+			if info.Size() != objectSize {
+				log.Printf("Размеры не совпадают, ожидается %d, получено %d\n", info.Size(), objectSize)
+			} else {
+				err1 := os.Remove(filePathOut)
+				if err1 != nil {
+					log.Printf("ошибка при удалении локального файла %s: %v\n", filePathOut, err1)
+				} else {
+					log.Printf("локальный файл %s удалён\n", filePathOut)
+				}
+				log.Printf("file %s uploaded to storage as %s size %d\n", filePathOut, targetPath, objectSize)
+				return fileSize, nil
+			}
+		}
+		log.Printf("file %s uploaded to storage as %s\n", filePathOut, targetPath)
+	}
+	return 0, errors.New("failed to upload file after 3 attempts: " + filePathOut)
+}
+
+func (s *Server) createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId string, fileSize int64) {
+	tryID := rand.Intn(999999) + 100000
+	for {
 		fileNameOutWoExt := strings.TrimSuffix(fileNameOut, filepath.Ext(fileNameOut))
-		u := fmt.Sprintf("%s?orig=%s&post_id=%s&name=%s&size=%d", s.vManagerAddUrl, targetPath, postId, fileNameOutWoExt, info.Size())
+		u := fmt.Sprintf("%s?orig=%s&post_id=%s&name=%s&size=%d&try_id=%d", s.vManagerAddUrl, targetPath, postId, fileNameOutWoExt, fileSize, tryID)
 		log.Printf("sending request to vManager to create task: %s\n", u)
-		_, err = getUrl(u, nil, false)
+		_, err := getUrl(u, nil, false)
 		if err == nil {
 			log.Printf("task created for %s\n", fileNameOut)
 			s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD task created: %s", fileNameOut))
 			return
-			// remove tmp files
-			// log.Println("removing temporary files...")
-			// err := os.Remove(filePathOut)
-			// if err != nil {
-			// 	log.Println(err)
-			// }
-			// files, err := filepath.Glob(filepath.Join(s.tmpDir, fmt.Sprintf("chunk_%s_*", fileNameOut)))
-			// // log.Printf("chunk files: %+v\n", files)
-			// if err != nil {
-			// 	log.Println(err)
-			// }
-			// for _, f := range files {
-			// 	if err := os.Remove(f); err != nil {
-			// 		log.Println(err)
-			// 	}
-			// }
-			// return
 		} else {
 			log.Println("task add error, will try again in 10 seconds:", err)
 			time.Sleep(time.Second * 10)
@@ -374,6 +264,29 @@ func (s *Server) createDleResponse(targetFilePath string) (res string) {
 
 func getUrl(url string, headers map[string]string, isFollowRedirect bool) (response *http.Response, err error) {
 	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	req.Header.Set("DevSecret", "jdhhfUUEUo938HHqppxcbdGa8")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	client := http.Client{
+		Timeout: 5 * time.Second,
+	}
+	if isFollowRedirect {
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			// log.Printf("redirect %s to %s\n", via[0].URL, req.URL)
+			return nil // allow redirect
+			// return errors.NewService("Redirect")
+		}
+	}
+	return client.Do(req)
+}
+
+func postUrl(url string, headers map[string]string, isFollowRedirect bool) (response *http.Response, err error) {
+	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		log.Println(err)
 		return
