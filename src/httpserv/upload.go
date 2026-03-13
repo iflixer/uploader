@@ -17,7 +17,7 @@ import (
 	"github.com/kennygrant/sanitize"
 )
 
-const maxChunkSize = int64(2 << 20) // 2 MiB
+const maxChunkSize = int64(50 << 20) // 50 MiB
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	// Ограничиваем тело
