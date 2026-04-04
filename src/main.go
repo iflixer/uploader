@@ -35,7 +35,7 @@ func main() {
 		s3secret = strings.TrimSpace(string(s3secret_))
 	}
 
-	storageService, err := storage.NewService(os.Getenv("S3_BUCKET"), os.Getenv("S3_ACCOUNT_ID"), os.Getenv("S3_KEY_ID"), s3secret)
+	storageService, err := storage.NewService(os.Getenv("S3_BUCKET"), os.Getenv("S3_ENDPOINT"), os.Getenv("S3_REGION"), os.Getenv("S3_KEY_ID"), s3secret)
 	if err != nil {
 		log.Fatal(err)
 	}

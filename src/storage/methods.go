@@ -8,7 +8,6 @@ func (s *Service) test() (err error) {
 	fmt.Println("testing storage connection:")
 	fmt.Println("accessKeyId:", s.accessKeyId)
 	fmt.Println("bucketName:", s.bucketName)
-	fmt.Println("accountID:", s.accountID)
 	fmt.Println("accessKeySecret(first 3 chars):", s.accessKeySecret[:3])
 
 	fmt.Println("upload test.txt as inbox/test.txt...")

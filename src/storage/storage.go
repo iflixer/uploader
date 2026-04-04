@@ -22,7 +22,6 @@ type Client struct {
 type Service struct {
 	Client          *Client
 	bucketName      string
-	accountID       string
 	accessKeyId     string
 	accessKeySecret string
 }
@@ -76,11 +75,9 @@ func (s *Service) Download(remoteFile, localFile string) (written int64, err err
 	return
 }
 
-func NewService(bucketName, accountID, accessKeyId, accessKeySecret string) (*Service, error) {
+func NewService(bucketName, endpoint, region, accessKeyId, accessKeySecret string) (*Service, error) {
 
-	endpoint := accountID + ".r2.cloudflarestorage.com"
-
-	r2Client, err := newR2(endpoint, accessKeyId, accessKeySecret, bucketName)
+	r2Client, err := newR2(endpoint, region, accessKeyId, accessKeySecret, bucketName)
 	if err != nil {
 		log.Printf("error creating R2 client: %s\n", err)
 		return nil, err
@@ -89,7 +86,6 @@ func NewService(bucketName, accountID, accessKeyId, accessKeySecret string) (*Se
 	s := &Service{
 		Client:          r2Client,
 		bucketName:      bucketName,
-		accountID:       accountID,
 		accessKeyId:     accessKeyId,
 		accessKeySecret: accessKeySecret,
 	}
@@ -97,7 +93,7 @@ func NewService(bucketName, accountID, accessKeyId, accessKeySecret string) (*Se
 	return s, s.test()
 }
 
-func newR2(endpoint, accessKey, secretKey, bucket string) (*Client, error) {
+func newR2(endpoint, region, accessKey, secretKey, bucket string) (*Client, error) {
 	// Транспорт с хорошими дефолтами и опцией переключить h2/1.1 при желании
 	tr := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
@@ -120,6 +116,7 @@ func newR2(endpoint, accessKey, secretKey, bucket string) (*Client, error) {
 	cli, err := minio.New(endpoint, &minio.Options{
 		Creds:     credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure:    true,
+		Region:    region,
 		Transport: httpClient.Transport,
 	})
 	if err != nil {
