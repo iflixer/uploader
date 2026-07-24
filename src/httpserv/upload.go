@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,14 @@ import (
 const maxChunkSize = int64(50 << 20) // 50 MiB
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("upload panic: remote=%s uri=%s err=%v stack=%s", r.RemoteAddr, r.RequestURI, rec, string(debug.Stack()))
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+		}
+	}()
+
 	// Ограничиваем тело
 	r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize)
 
@@ -56,6 +65,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chunkNumber != chunksTotal-1 {
+		log.Printf("chunk accepted: file=%s chunk=%d/%d elapsed=%s", fileNameOut, chunkNumber, chunksTotal, time.Since(start))
 		s.returnResp(w, "chunk accepted", nil)
 		return
 	}
@@ -63,13 +73,24 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	// последний чанк → финализируем и запускаем обработку
 	finalPath := filepath.Join(s.tmpDir, fileNameOut)
 	targetPath := filepath.Join("inbox", fileNameOut)
+	log.Printf("last chunk assembled: file=%s finalPath=%s target=%s elapsed=%s", fileNameOut, finalPath, targetPath, time.Since(start))
 	go s.finalize(finalPath, targetPath, fileNameOut, postID)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if os.Getenv("UPLOAD_RESPONSE_FORMAT") == "dle" {
-		_, _ = w.Write([]byte(s.createDleResponse(targetPath)))
+		res := s.createDleResponse(targetPath)
+		n, err := w.Write([]byte(res))
+		if err != nil {
+			log.Printf("last chunk response write error: file=%s target=%s wrote=%d err=%v", fileNameOut, targetPath, n, err)
+			return
+		}
+		log.Printf("last chunk response sent: file=%s target=%s bytes=%d elapsed=%s", fileNameOut, targetPath, n, time.Since(start))
+		return
 	}
+
+	log.Printf("last chunk response format mismatch: file=%s UPLOAD_RESPONSE_FORMAT=%q", fileNameOut, os.Getenv("UPLOAD_RESPONSE_FORMAT"))
+	s.returnResp(w, "chunk completed", nil)
 }
 
 // refinalize takes the file already in the tmpDir and finalizes it
