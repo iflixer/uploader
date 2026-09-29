@@ -3,6 +3,7 @@ package httpserv
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math/rand"
 	"net/http"
@@ -73,23 +74,36 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	// последний чанк → финализируем и запускаем обработку
 	finalPath := filepath.Join(s.tmpDir, fileNameOut)
 	targetPath := filepath.Join("inbox", fileNameOut)
+
+	// Если объект уже есть в storage, значит это повтор последнего чанка.
+	if _, statErr := s.storage.Stat(targetPath); statErr == nil {
+		log.Printf("UPLOAD_DUP_LAST_CHUNK_STORAGE_EXISTS file=%s target=%s", fileNameOut, targetPath)
+		log.Printf("last chunk duplicate ignored: file=%s target=%s object already exists", fileNameOut, targetPath)
+		s.writeUploadResponse(w, targetPath)
+		return
+	}
+
 	log.Printf("last chunk assembled: file=%s finalPath=%s target=%s elapsed=%s", fileNameOut, finalPath, targetPath, time.Since(start))
 	go s.finalize(finalPath, targetPath, fileNameOut, postID)
 
+	s.writeUploadResponse(w, targetPath)
+}
+
+func (s *Server) writeUploadResponse(w http.ResponseWriter, targetPath string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if os.Getenv("UPLOAD_RESPONSE_FORMAT") == "dle" {
 		res := s.createDleResponse(targetPath)
 		n, err := w.Write([]byte(res))
 		if err != nil {
-			log.Printf("last chunk response write error: file=%s target=%s wrote=%d err=%v", fileNameOut, targetPath, n, err)
+			log.Printf("last chunk response write error: target=%s wrote=%d err=%v", targetPath, n, err)
 			return
 		}
-		log.Printf("last chunk response sent: file=%s target=%s bytes=%d elapsed=%s", fileNameOut, targetPath, n, time.Since(start))
+		log.Printf("last chunk response sent: target=%s bytes=%d", targetPath, n)
 		return
 	}
 
-	log.Printf("last chunk response format mismatch: file=%s UPLOAD_RESPONSE_FORMAT=%q", fileNameOut, os.Getenv("UPLOAD_RESPONSE_FORMAT"))
+	log.Printf("last chunk response format mismatch: target=%s UPLOAD_RESPONSE_FORMAT=%q", targetPath, os.Getenv("UPLOAD_RESPONSE_FORMAT"))
 	s.returnResp(w, "chunk completed", nil)
 }
 
@@ -128,6 +142,31 @@ func (s *Server) appendChunk(r io.Reader, fileNameOut string, chunkNumber, chunk
 	// если это последний чанк → склеиваем
 	if chunkNumber == chunksTotal-1 {
 		finalPath := filepath.Join(s.tmpDir, fileNameOut)
+
+		if fileExists(finalPath) {
+			log.Printf("UPLOAD_DUP_LAST_CHUNK_ASSEMBLED_EXISTS file=%s finalPath=%s", fileNameOut, finalPath)
+			log.Printf("last chunk duplicate: assembled file already exists %s", finalPath)
+			return nil
+		}
+
+		assembleLock := finalPath + ".assemble.lock"
+		locked, err := tryAcquireLockFile(assembleLock)
+		if err != nil {
+			return fmt.Errorf("acquire assemble lock: %w", err)
+		}
+		if !locked {
+			log.Printf("UPLOAD_DUP_LAST_CHUNK_ASSEMBLE_LOCKED file=%s lock=%s", fileNameOut, assembleLock)
+			log.Printf("last chunk duplicate: assemble in progress for %s", finalPath)
+			return nil
+		}
+		defer releaseLockFile(assembleLock)
+
+		if fileExists(finalPath) {
+			log.Printf("UPLOAD_DUP_LAST_CHUNK_ASSEMBLED_AFTER_LOCK file=%s finalPath=%s", fileNameOut, finalPath)
+			log.Printf("last chunk duplicate after lock: assembled file already exists %s", finalPath)
+			return nil
+		}
+
 		fout, err := os.OpenFile(finalPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
 			return fmt.Errorf("create final file: %w", err)
@@ -146,8 +185,6 @@ func (s *Server) appendChunk(r io.Reader, fileNameOut string, chunkNumber, chunk
 				return fmt.Errorf("copy part %d: %w", i, err)
 			}
 			fin.Close()
-			// после сборки можно удалить
-			_ = os.Remove(partPath)
 		}
 	}
 
@@ -155,6 +192,19 @@ func (s *Server) appendChunk(r io.Reader, fileNameOut string, chunkNumber, chunk
 }
 
 func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
+	finalizeLock := filePathOut + ".finalize.lock"
+	locked, err := tryAcquireLockFile(finalizeLock)
+	if err != nil {
+		log.Printf("error acquiring finalize lock for %s: %v", filePathOut, err)
+		return
+	}
+	if !locked {
+		log.Printf("UPLOAD_DUP_FINALIZE_LOCKED filePath=%s target=%s", filePathOut, targetPath)
+		log.Printf("finalize already in progress: %s", filePathOut)
+		return
+	}
+	defer releaseLockFile(finalizeLock)
+
 	// upload to storage
 	fileSize, err := s.uploadResult(filePathOut, targetPath)
 	if err != nil {
@@ -165,6 +215,7 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 
 	// create task to convert
 	s.createConvertTaskAndClean(fileNameOut, filePathOut, targetPath, postId, fileSize)
+	s.cleanupPartFiles(fileNameOut)
 
 	// check if there are no tasks in progress and send notification
 	files, err := filepath.Glob(filepath.Join(s.tmpDir, "*"))
@@ -175,6 +226,42 @@ func (s *Server) finalize(filePathOut, targetPath, fileNameOut, postId string) {
 	if len(files) == 0 {
 		s.telegramService.Send(telegram.ChanVideo, fmt.Sprintf("UPLOAD done: %s", targetPath))
 	}
+}
+
+func (s *Server) cleanupPartFiles(fileNameOut string) {
+	parts, err := filepath.Glob(filepath.Join(s.tmpDir, fmt.Sprintf("%s_*.part", fileNameOut)))
+	if err != nil {
+		log.Printf("error scanning part files for cleanup %s: %v", fileNameOut, err)
+		return
+	}
+	for _, part := range parts {
+		if err := os.Remove(part); err != nil && !os.IsNotExist(err) {
+			log.Printf("error removing part file %s: %v", part, err)
+		}
+	}
+}
+
+func tryAcquireLockFile(lockPath string) (bool, error) {
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err == nil {
+		_ = f.Close()
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+func releaseLockFile(lockPath string) {
+	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("error releasing lock file %s: %v", lockPath, err)
+	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func (s *Server) uploadResult(filePathOut, targetPath string) (fileSize int64, err error) {
