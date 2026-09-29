@@ -49,8 +49,8 @@ func (c *Client) UploadWithProgress(ctx context.Context, filePath, objectKey str
 			return err
 		}
 
-		tr := &teeCountReader{
-			r:          f,
+		tr := &teeCountReadSeeker{
+			rs:         f,
 			totalSize:  total,
 			lastReport: time.Now(),
 			cb: func(done, total int64, mbps float64) {
@@ -81,8 +81,8 @@ func (c *Client) UploadWithProgress(ctx context.Context, filePath, objectKey str
 
 type ProgressFunc func(done, total int64, mbps float64)
 
-type teeCountReader struct {
-	r          io.Reader
+type teeCountReadSeeker struct {
+	rs         io.ReadSeeker
 	totalSize  int64 // общий размер файла (для процента)
 	doneTotal  int64 // накопленный прогресс
 	winBytes   int64 // байты за окно (для скорости)
@@ -90,8 +90,8 @@ type teeCountReader struct {
 	cb         ProgressFunc
 }
 
-func (t *teeCountReader) Read(p []byte) (int, error) {
-	n, err := t.r.Read(p)
+func (t *teeCountReadSeeker) Read(p []byte) (int, error) {
+	n, err := t.rs.Read(p)
 	if n > 0 {
 		atomic.AddInt64(&t.doneTotal, int64(n))
 		atomic.AddInt64(&t.winBytes, int64(n))
@@ -118,4 +118,8 @@ func (t *teeCountReader) Read(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+func (t *teeCountReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	return t.rs.Seek(offset, whence)
 }
