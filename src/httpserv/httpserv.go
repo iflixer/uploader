@@ -55,6 +55,10 @@ func (s *Server) Run() {
 		Debug:            false,
 	})
 	handler = c.Handler(handler)
+	if pending := s.recoverPending(); len(pending) > 0 {
+		log.Printf("recover: %d pending file(s) found in %s", len(pending), s.tmpDir)
+		go s.finalizePending(pending)
+	}
 	if err := http.ListenAndServe(":"+s.port, handler); err != nil {
 		log.Fatal(err)
 	}

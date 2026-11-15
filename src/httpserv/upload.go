@@ -277,6 +277,9 @@ func (s *Server) uploadResult(filePathOut, targetPath string) (fileSize int64, e
 		err = s.storage.Upload(filePathOut, targetPath)
 		if err != nil {
 			log.Printf("storage upload attempt %d failed for %s -> %s: %v", i+1, filePathOut, targetPath, err)
+			if i < 2 {
+				time.Sleep(30 * time.Second)
+			}
 			continue
 		}
 		objectSize, err := s.storage.Stat(targetPath)
