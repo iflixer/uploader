@@ -4,7 +4,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 // recoverPending runs on startup, before the HTTP server accepts requests.
@@ -59,13 +61,30 @@ func (s *Server) recoverPending() (names []string) {
 	return names
 }
 
-// finalizePending uploads the files found by recoverPending one by one.
-func (s *Server) finalizePending(names []string) {
-	for _, name := range names {
-		log.Printf("recover: resuming upload of %s", name)
-		postID, _, _ := strings.Cut(name, "_")
-		s.finalize(filepath.Join(s.tmpDir, name), filepath.Join("inbox", name), name, postID)
+// recoverConcurrency: сколько файлов заливать одновременно (env RECOVER_CONCURRENCY, по умолчанию 3).
+func recoverConcurrency() int {
+	if n, err := strconv.Atoi(os.Getenv("RECOVER_CONCURRENCY")); err == nil && n > 0 {
+		return n
 	}
+	return 3
+}
+
+// finalizePending uploads the files found by recoverPending, a few at a time.
+func (s *Server) finalizePending(names []string) {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, recoverConcurrency())
+	for _, name := range names {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			log.Printf("recover: resuming upload of %s", name)
+			postID, _, _ := strings.Cut(name, "_")
+			s.finalize(filepath.Join(s.tmpDir, name), filepath.Join("inbox", name), name, postID)
+		}()
+	}
+	wg.Wait()
 	if len(names) > 0 {
 		log.Printf("recover: finished processing %d pending file(s)", len(names))
 	}

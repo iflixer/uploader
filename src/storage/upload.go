@@ -8,6 +8,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -39,8 +40,12 @@ func (c *Client) UploadWithProgress(ctx context.Context, filePath, objectKey str
 
 	opts := minio.PutObjectOptions{
 		ContentType: ct,
-		// Крупные части = меньше запросов за аплоад, меньше шансов потерять MPU-сессию
-		PartSize: 32 * 1024 * 1024,
+		// Без ConcurrentStreamParts minio-go на не-ReaderAt источнике льёт части строго
+		// последовательно по одному соединению (~0.5 MiB/s на этом endpoint).
+		// Память: PartSize * NumThreads на каждый аплоад.
+		PartSize:              16 * 1024 * 1024,
+		NumThreads:            uint(uploadThreads()),
+		ConcurrentStreamParts: true,
 		// SendContentMd5: true,       // если нужно строго проверять целостность
 	}
 
@@ -96,6 +101,14 @@ func (c *Client) UploadWithProgress(ctx context.Context, filePath, objectKey str
 		}
 	}
 	return fmt.Errorf("upload failed after retries: %w", lastErr)
+}
+
+// uploadThreads: число параллельных частей одного файла (env UPLOAD_THREADS, по умолчанию 6).
+func uploadThreads() int {
+	if n, err := strconv.Atoi(os.Getenv("UPLOAD_THREADS")); err == nil && n > 0 {
+		return n
+	}
+	return 6
 }
 
 type ProgressFunc func(done, total int64, mbps float64)
