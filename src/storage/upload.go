@@ -49,12 +49,13 @@ func (c *Client) UploadWithProgress(ctx context.Context, filePath, objectKey str
 		// SendContentMd5: true,       // если нужно строго проверять целостность
 	}
 
-	const maxAttempts = 4
+	const maxAttempts = 6
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
 			// Сервер мог потерять multipart-сессию (NoSuchUpload) — чистим хвосты и начинаем заново
-			if err := c.cli.RemoveIncompleteUpload(ctx, c.bucket, objectKey); err != nil {
+			// NoSuchUpload тут ожидаем: сессия уже потеряна на стороне сервера
+			if err := c.cli.RemoveIncompleteUpload(ctx, c.bucket, objectKey); err != nil && minio.ToErrorResponse(err).Code != "NoSuchUpload" {
 				log.Printf("RemoveIncompleteUpload %s: %v", objectKey, err)
 			}
 		}
@@ -78,6 +79,7 @@ func (c *Client) UploadWithProgress(ctx context.Context, filePath, objectKey str
 			},
 		}
 
+		attemptStart := time.Now()
 		_, err := c.cli.PutObject(ctx, c.bucket, objectKey, tr, total, opts)
 		if err == nil {
 			// финальный 100% только ПОСЛЕ успеха
@@ -90,10 +92,13 @@ func (c *Client) UploadWithProgress(ctx context.Context, filePath, objectKey str
 		if attempt == maxAttempts {
 			break
 		}
-		// Экспоненциальный backoff 5s, 10s, 20s: даём хранилищу время восстановиться
+		// Экспоненциальный backoff 5s, 10s, 20s...: даём хранилищу время восстановиться
 		// (раньше 1-3s — все ретраи сгорали, пока storage был недоступен).
 		wait := time.Duration(5<<(attempt-1)) * time.Second
-		log.Printf("upload %s attempt %d/%d failed: %v; retry in %s", objectKey, attempt, maxAttempts, err, wait)
+		er := minio.ToErrorResponse(err)
+		log.Printf("upload %s attempt %d/%d failed after %s (sent ~%d/%d bytes): %v [code=%s requestID=%s hostID=%s host=%s]; retry in %s",
+			objectKey, attempt, maxAttempts, time.Since(attemptStart).Round(time.Second),
+			atomic.LoadInt64(&tr.doneTotal), total, err, er.Code, er.RequestID, er.HostID, er.Server, wait)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
